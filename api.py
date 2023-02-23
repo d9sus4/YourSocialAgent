@@ -2,7 +2,7 @@ import os
 import openai
 from chatgpt_wrapper import ChatGPT
 
-openai.api_key = "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"
+openai.api_key = "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"
 
 prompt_example = "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.\n\nHuman: Hello, who are you?\nAI: I am an AI created by OpenAI. How can I help you today?\nHuman: "
 start_sequence = "\nAI:"
