@@ -1,6 +1,6 @@
 import os
 import cmd
-import api
+import llm
 from chatlog_manager import ChatlogManager
 from prompt_manager import PromptManager
 class YSAShell(cmd.Cmd):
@@ -39,7 +39,7 @@ class YSAShell(cmd.Cmd):
     prompt_manager = PromptManager()
 
     # overrides
-    intro = '''Your Social Agent Shell, type "help" for instructions.'''
+    intro = "Your Social Agent Shell, type \"help\" for instructions."
     prompt = "(None) "
 
     def precmd(self, line):
@@ -55,7 +55,7 @@ class YSAShell(cmd.Cmd):
         if line == "SET_A_PERSON_FIRST":
             print("Who are you talking with? Indicate a person first.")
         else:
-            print(f'''Syntax error in line "{line}"!''')
+            print(f"Syntax error in line \"{line}\"!")
 
     # params
     person = None
@@ -64,6 +64,7 @@ class YSAShell(cmd.Cmd):
     debug = True
 
     # commands
+    # call Cmd.onecmd(str) to interpret a single command
     def do_quit(self, arg):
         "Quit Y.S.A. Shell."
         print("See you!")
@@ -122,7 +123,7 @@ class YSAShell(cmd.Cmd):
             if self.debug:
                 print(prompt)
 
-            res = api.chatgpt_complete(prompt)
+            res = llm.ask_chatgpt(prompt)
             raw_res = res
 
             # post-processing the response from ChatGPT
@@ -161,7 +162,7 @@ class YSAShell(cmd.Cmd):
             if self.debug:
                 print(prompt)
             
-            res = api.davinci_complete(prompt)[:self.num_res]
+            res = llm.davinci_complete(prompt)[:self.num_res]
 
         print("LLM suggests:")
         for i in range(len(res)):

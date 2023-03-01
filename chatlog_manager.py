@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-
+from error import *
 class ChatlogManager:
     def __init__(self, dir=Path("./data")):
         self.dir = dir
@@ -14,13 +14,13 @@ class ChatlogManager:
                 with open(filename, 'r', encoding="utf8") as f:
                     data = json.load(f)
             except EnvironmentError:
-                print("Loading json failed!")
+                raise DBError("Loading json failed!")
         data.append({"from": "I" if send else "They", "text": text})
         try:
             with open(filename, 'w', encoding="utf8") as f:
                 json.dump(data, f, ensure_ascii=False)
         except EnvironmentError:
-            print("Dumping json failed!")
+            raise DBError("Dumping json failed!")
 
     def read_all(self, person):
         filename = str(self.dir / (person + ".json"))
@@ -30,7 +30,7 @@ class ChatlogManager:
                 with open(filename, 'r', encoding="utf8") as f:
                     data = json.load(f)
             except EnvironmentError:
-                print("Loading json failed!")
+                raise DBError("Loading json failed!")
         return data
 
     def clear(self, person):
@@ -39,4 +39,4 @@ class ChatlogManager:
             try:
                 os.remove(filename)
             except EnvironmentError:
-                print("Clearing chatlog failed!")
+                raise DBError("Clearing chatlog failed!")

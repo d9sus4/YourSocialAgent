@@ -1,6 +1,7 @@
 import os
 import json
 from pathlib import Path
+from error import *
 
 class PromptManager:
     def __init__(self, filename=str(Path("./data/prompt.json"))):
@@ -13,7 +14,7 @@ class PromptManager:
                 with open(self.filename, 'r', encoding="utf8") as f:
                     data = json.load(f)
             except EnvironmentError:
-                print("Loading json failed!")
+                raise DBError("Loading json failed!")
         if person not in data.keys():
             data[person] = []
         data[person].append(prompt.strip())
@@ -21,7 +22,7 @@ class PromptManager:
             with open(self.filename, 'w', encoding="utf8") as f:
                 data = json.dump(data, f, ensure_ascii=False)
         except EnvironmentError:
-            print("Dumping json failed!")
+            raise DBError("Dumping json failed!")
 
     def read_all(self, person):
         data = {}
@@ -30,7 +31,7 @@ class PromptManager:
                 with open(self.filename, 'r', encoding="utf8") as f:
                     data = json.load(f)
             except EnvironmentError:
-                print("Loading json failed!")
+                raise DBError("Loading json failed!")
         if person in data.keys():
             return data[person]
         else:
@@ -46,4 +47,4 @@ class PromptManager:
                 with open(self.filename, 'w', encoding="utf8") as f:
                     json.dump(data, f, ensure_ascii=False)
             except EnvironmentError:
-                print("Clearing prompt failed!")
+                raise DBError("Clearing prompt failed!")
