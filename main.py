@@ -12,13 +12,15 @@ class YSAShell(cmd.Cmd):
         "p": "person",
         "r": "receive",
         "s": "send",
+        "q": "quit",
         "v": "view",
         "vp": "viewprompt",
         "c": "clear",
         "cp": "clearprompt",
         "ca": "clearall",
         "ap": "addprompt",
-        "ac": "autocomp",
+        "su": "suggest",
+        "num": "numsuggest",
     }
     CHECK_PERSON = (
         "receive",
@@ -26,13 +28,11 @@ class YSAShell(cmd.Cmd):
         "clear",
         "clearall",
         "clearprompt",
-        "autocomp",
+        "suggest",
         "view",
         "viewprompt",
         "addprompt",
     )
-    MODEL = ["davinci", "chatgpt"][1]
-    DEBUG = True
 
     # DB managers
     chatlog_manager = ChatlogManager()
@@ -59,6 +59,9 @@ class YSAShell(cmd.Cmd):
 
     # params
     person = None
+    model = ["davinci", "chatgpt"][1]
+    num_res = 3
+    debug = True
 
     # commands
     def do_quit(self, arg):
@@ -88,35 +91,62 @@ class YSAShell(cmd.Cmd):
         self.prompt_manager.clear(self.person)
         print("Chatlog & prompt cleared!")
     
-    def do_autocomp(self, arg):
-        "Do auto-completion through LLM."
+    def do_suggest(self, arg):
+        "Generate suggestions by LLM."
 
-        if self.MODEL == "chatgpt":
-            prompt = "The following is a conversation between I and another person.\n"
+        if self.model == "chatgpt":
+            prompt = '''The following is an instant messaging conversation between another person and me.\n'''
             personal_prompts = self.prompt_manager.read_all(self.person)
             for line in personal_prompts:
                 prompt += line + '\n'
-
-            keywords = input("Please input keywords (enter to skip): ")
-            keywords = keywords.strip().split()
-            if len(keywords) > 0:
-                prompt += "I am going to send back something about: "
-                for keyword in keywords:
-                    prompt += keyword + ", "
-                prompt = prompt[:-2] + '\n\n'
+            prompt += '\n'
 
             msgs = self.chatlog_manager.read_all(self.person)
             for msg in msgs:
                 prompt += msg["from"] + ": " + msg["text"] + '\n'
-            prompt += "I: "
+            prompt += "\n"
 
-            if self.DEBUG:
+            prompt += f'''Now, please compose {self.num_res} possible reply message(s) based on the given context, in the same language as the conversation above. \n'''
+            prompt += '''Please list only one message for each line without numbering it. \n''' 
+            prompt += '''Do not include any extra content, such as a translation, or a leading paragraph in your response. \n'''
+            prompt += '''Just list the reply message texts straightly. \n'''
+            
+            keywords = input("Please input keywords (enter to skip): ")
+            keywords = keywords.strip().split()
+            if len(keywords) > 0:
+                prompt += "Furthermore, the following keywords should be included in all the message(s) you compose for me: "
+                for keyword in keywords:
+                    prompt += keyword + ", "
+                prompt = prompt[:-2] + ". \n"
+
+            if self.debug:
                 print(prompt)
 
             res = api.chatgpt_complete(prompt)
+            raw_res = res
+
+            # post-processing the response from ChatGPT
+            try:
+                res = res.splitlines()
+                # 1. eliminate possible leading paragraph, e.g. "Possible messages: "
+                if res[0].strip()[-1] == ":":
+                    res = res[1:]
+                # 2. eliminate empty lines
+                # 3. eliminate translations
+                # 4. delete leading "#." or "-"
+                for i in range(len(res)-1, -1, -1):
+                    res[i] = res[i].strip()
+                    if len(res[i]) < 1 or (len(res[i]) > 11 and res[i][:11].lower() == "translation"):
+                        del res[i]
+                    if res[i].split(' ', 1)[0] == "-" or (len(res[i].split()[0]) > 1 and res[i].split()[0][-1] == '.'):
+                        res[i] = res[i].split(' ', 1)[1]
+                        
+            except IndexError:
+                res = ["Index error!", "Maybe ChatGPT responded something unexpected that couldn't be processed.", f"Raw response: {raw_res}"]
+
         
         else:
-            prompt = "The following is a conversation between I and another person.\n"
+            prompt = "The following is a conversation between another person and me.\n"
             personal_prompts = self.prompt_manager.read_all(self.person)
             for line in personal_prompts:
                 prompt += line + '\n'
@@ -128,17 +158,23 @@ class YSAShell(cmd.Cmd):
                 prompt += msg["from"] + ": " + msg["text"] + '\n'
             prompt += "I: "
 
-            if self.DEBUG:
+            if self.debug:
                 print(prompt)
             
-            res = api.davinci_complete(prompt)[0]
+            res = api.davinci_complete(prompt)[:self.num_res]
 
-        print("Auto-completion suggests:", res)
-        if input("Is that OK? (y/n): ").strip() == "y":
-            self.chatlog_manager.add(res, self.person, send=True)
-            print("Message sent!")
-        else:
-            print("Sorry about that!")
+        print("LLM suggests:")
+        for i in range(len(res)):
+            print(f"{i+1}. {res[i]}")
+        try:
+            choice = int('0' + input("Which one would you like to send? (0 for none): "))
+            if choice in range(1, len(res)+1):
+                self.chatlog_manager.add(res[choice], self.person, send=True)
+                print("Message sent!")
+            else:
+                print("Sorry about that!")
+        except ValueError:
+            print("Illegal input!")
 
     def do_view(self, arg):
         "View all chat logs with the current person"
@@ -171,14 +207,20 @@ class YSAShell(cmd.Cmd):
 
     def do_model(self, arg):
         "Switch model."
-        self.MODEL = arg
+        self.model = arg
         print(f"Model switched to {arg}.")
     
     def do_debug(self, arg):
-        self.DEBUG = not self.DEBUG
-        print(f"DEBUG set to {str(self.DEBUG)}.")
+        "Enable / disable debugging."
+        self.debug = not self.debug
+        print(f"debug set to {str(self.debug)}.")
 
+    def do_numsuggest(self, arg):
+        "Set the number of generated suggestions."
+        self.num_res = int(arg)
+        print(f"Number of suggestions set to {arg}.")
 
+    
 def main():
     ysa = YSAShell()
     YSAShell().cmdloop()
