@@ -10,7 +10,7 @@ prompt_example = "The following is a conversation with an AI assistant. The assi
 start_sequence = "\nAI:"
 restart_sequence = "\nHuman: "
 
-CHATGPT_API = ["chatgpt_wrapper", "rev_chatgpt"][1]
+CHATGPT_API = ["chatgpt_wrapper", "rev_chatgpt", "OpenAI"][1]
 
 def davinci_complete(prompt, temp=0.9, max_tokens=500, top_p=1, stop=["I:", "They:"], retry=5):
     res = []
@@ -43,9 +43,13 @@ if CHATGPT_API == "chatgpt_wrapper":
     def ask_chatgpt(prompt):
         res = chatgpt_wrapper.ask(prompt)
         return res
-else:
+
+elif CHATGPT_API == "rev_chatgpt":
     rev_chatgpt = Chatbot(config=config)
     def ask_chatgpt(prompt):
         for data in rev_chatgpt.ask(prompt): # generator
             res = data["message"]
         return res
+
+else:
+    raise NotImplementedError()

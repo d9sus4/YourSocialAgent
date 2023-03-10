@@ -74,15 +74,19 @@ def suggest_reply(person: str, model: str, n_replies: int, keywords: list=[]) ->
         # post-processing the response from ChatGPT
         try:
             res = res.splitlines()
-            # 1. eliminate possible leading paragraph, e.g. "Possible messages: "
-            if res[0].strip()[-1] == ":":
+            # 1. eliminate empty lines
+            for i in range(len(res)-1, -1, -1):
+                res[i] = res[i].strip()
+                if len(res[i]) < 1:
+                    del res[i]
+            # 2. eliminate possible leading paragraph, e.g. "Possible messages: "
+            if len(res) > 0 and res[0].strip()[-1] == ":":
                 res = res[1:]
-            # 2. eliminate empty lines
             # 3. eliminate translations
             # 4. delete leading "#." or "-"
             for i in range(len(res)-1, -1, -1):
                 res[i] = res[i].strip()
-                if len(res[i]) < 1 or (len(res[i]) > 11 and res[i][:11].lower() == "translation"):
+                if len(res[i]) > 11 and res[i][:11].lower() == "translation":
                     del res[i]
                 if res[i].split(' ', 1)[0] == "-" or (len(res[i].split()[0]) > 1 and res[i].split()[0][-1] == '.'):
                     res[i] = res[i].split(' ', 1)[1]
