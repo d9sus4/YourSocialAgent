@@ -10,7 +10,7 @@ prompt_example = "The following is a conversation with an AI assistant. The assi
 start_sequence = "\nAI:"
 restart_sequence = "\nHuman: "
 
-CHATGPT_API = ["chatgpt_wrapper", "rev_chatgpt", "OpenAI"][1]
+CHATGPT_API = ["chatgpt_wrapper", "rev_chatgpt", "OpenAI"][2]
 
 def davinci_complete(prompt, temp=0.9, max_tokens=500, top_p=1, stop=["I:", "They:"], retry=5):
     res = []
@@ -50,6 +50,49 @@ elif CHATGPT_API == "rev_chatgpt":
         for data in rev_chatgpt.ask(prompt): # generator
             res = data["message"]
         return res
+
+elif CHATGPT_API == "OpenAI":
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+    ]
+    num_message_limit = 100
+
+    def set_num_message_limit(num: int):
+        num_message_limit = num
+
+    def set_chatgpt_role(role: str):
+        '''Set ChatGPT's role as {role}. This will clear chat history.'''
+        clear_chatgpt_history()
+        messages[0]["content"] = f"You are {role}."
+
+    def clear_chatgpt_history():
+        messages = messages[:1]
+
+    def _truncate_chatgpt_history():
+        length = len(messages) - 1
+        if length > num_message_limit:
+            del messages[1: length - num_message_limit + 1]
+
+    def ask_chatgpt(prompt, retry=5):
+        messages.append({"role": "user", "content": prompt})
+        _truncate_chatgpt_history()
+        fail_cnt = 0
+        while True:
+            try:
+                res = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                )["choices"][0]["message"]
+                break
+            except Exception:
+                fail_cnt += 1
+                if fail_cnt > retry:
+                    print("OpenAI API down!")
+                    return "Failed to reach ChatGPT!"
+                print(f"Failed to access OpenAI API, count={fail_cnt}. Retrying...")
+
+        messages.append({"role": res["role"], "content": res["content"]})
+        return res["content"]
 
 else:
     raise NotImplementedError()

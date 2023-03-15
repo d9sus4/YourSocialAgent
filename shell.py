@@ -1,8 +1,4 @@
-import os
 import cmd
-import llm
-from chatlog_manager import ChatlogManager
-from prompt_manager import PromptManager
 from api import *
 class YSAShell(cmd.Cmd):
     """
