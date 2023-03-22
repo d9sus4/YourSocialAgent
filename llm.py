@@ -3,7 +3,8 @@ import openai
 from chatgpt_wrapper import ChatGPT
 from revChatGPT.V1 import Chatbot
 
-openai.api_key = "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"
+openai.api_key = "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" # mine
+# openai.api_key = "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" # prnake
 config={"email": "prnake@gmail.com", "password": ",ejhpQc%Q4+&$9T"}
 
 prompt_example = "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.\n\nHuman: Hello, who are you?\nAI: I am an AI created by OpenAI. How can I help you today?\nHuman: "

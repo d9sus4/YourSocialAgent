@@ -57,9 +57,9 @@ def suggest_reply(person: str, model: str, n_replies: int, keywords: list=[]) ->
         for msg in msgs:
             prompt += msg["from"] + ": " + msg["text"] + '\n'
         prompt += "\n"
-        prompt += f"Now, please compose {n_replies} possible reply message(s) based on the given context, in the same language as the conversation above. \n"
-        prompt += "Please list only one message for each line without numbering it. \n"
-        prompt += "Do not include any extra content, such as a translation, or a leading paragraph in your response. \n"
+        prompt += f"Now, you will compose {n_replies} possible reply message(s) based on the given context, in the same language as the conversation above. \n"
+        prompt += "You will list only one message in each line, without numbering it. \n"
+        prompt += "You will not include any extra content, such as a translation, or a leading paragraph in your response. \n"
         prompt += "Just list the reply message texts straightly. \n"
         # prompting keywords
         if len(keywords) > 0:
@@ -67,7 +67,8 @@ def suggest_reply(person: str, model: str, n_replies: int, keywords: list=[]) ->
             for keyword in keywords:
                 prompt += keyword + ", "
             prompt = prompt[:-2] + ". \n"
-        verbose("Sending following prompt to ChatGPT:", prompt)
+        verbose("Sending following prompt to ChatGPT:")
+        verbose(prompt)
         res = llm.ask_chatgpt(prompt)
         raw_res = res
 
