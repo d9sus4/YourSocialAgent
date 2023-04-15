@@ -1,6 +1,6 @@
 from flask import *
 from api import *
-from llm import ask_chatgpt
+from llm import GPTSession
 import json
 import requests
 from pathlib import Path
@@ -41,6 +41,9 @@ if os.path.exists(filename):
 signal.signal(signal.SIGINT, exit_handler)
 signal.signal(signal.SIGTERM, exit_handler)
 signal.signal(signal.SIGABRT, exit_handler)
+
+# GPT sessions (other than those in api.py)
+random_chat_session = GPTSession(role="a chatbot")
 
 app = Flask(__name__)
 
@@ -92,7 +95,7 @@ def webhook():
                 if message_type == "text":
                     text = content.get("text", "")
                     if len(text) > 0:
-                        t = threading.Thread(target=ask_chatgpt_and_reply, args=(text, message_id))
+                        t = threading.Thread(target=ask_chatbot_and_reply, args=(text, message_id))
                         t.start()
             elif chat_type == "group": # receive from a group, act as a chat helper
                 # ensure chat_id is received
@@ -102,7 +105,8 @@ def webhook():
                 if chat_id not in chats.keys():
                     chats[chat_id] = {
                         "main_user": "UNDEFINED",
-                        "chat_with": "UNDEFINED"
+                        "chat_with": "UNDEFINED",
+                        "last_suggest": []
                         }
                 main_user = chats[chat_id]["main_user"]
                 chat_with = chats[chat_id]["chat_with"]
@@ -111,38 +115,50 @@ def webhook():
                     if message_type == "text":
                         text = content.get("text", "")
                         text = text.replace("@_user_1", "").strip()
-                        slots = text.split(' ', 1)
-                        print(slots)
-                        if len(slots) > 0:
-                            if slots[0] == "/main":
+                        command = text.split(' ', 1)
+                        print(command)
+                        if len(command) > 0:
+                            if command[0] == "/main": # set main user as the sender
                                 chats[chat_id]["main_user"] = sender_open_id
                                 print(f"Main user set to {sender_open_id}.")
-                                t = threading.Thread(target=ack, args=(message_id, ))
+                                t = threading.Thread(target=reply, args=("Ack.", message_id))
                                 t.start()
-                            elif slots[0] == "/person" and len(slots) > 1:
-                                chats[chat_id]["chat_with"] = slots[1].strip()
-                                print(f"Chatting with {slots[1].strip()}.")
-                                t = threading.Thread(target=ack, args=(message_id, ))
+                            elif command[0] == "/person" and len(command) > 1: # set the name of the contact
+                                chats[chat_id]["chat_with"] = command[1].strip()
+                                print(f"Chatting with {command[1].strip()}.")
+                                t = threading.Thread(target=reply, args=("Ack.", message_id))
                                 t.start()
-                            elif slots[0] == "/prompt" and len(slots) > 1:
-                                prompt = slots[1].strip()
+                            elif command[0] == "/prompt" and len(command) > 1: # add a prompt to the contact
+                                prompt = command[1].strip()
                                 new_prompt(chat_with, prompt)
                                 print(f"New prompt \"{prompt}\" has been added to {chat_with}.")
-                                t = threading.Thread(target=ack, args=(message_id, ))
+                                t = threading.Thread(target=reply, args=("Ack.", message_id))
                                 t.start()
-                            elif slots[0] == "/clearprompt":
+                            elif command[0] == "/feedback" and len(command) > 1: # feedback
+                                pass
+                                # TODO
+                            elif command[0] == "/pick" and len(command) > 1: # record a pick from the latest suggestion
+                                try:
+                                    picked = int(command[1].strip())
+                                    # TODO
+                                    
+                                except ValueError:
+                                    print("Picking not legal.")
+                                    t = threading.Thread(target=reply, args=("Illegal!", message_id))
+                                    t.start()
+                            elif command[0] == "/clearprompt": # clear all prompts of current contact
                                 clear_prompt(person=chat_with)
                                 print(f"Prompt of {chat_with} cleared.")
-                                t = threading.Thread(target=ack, args=(message_id, ))
+                                t = threading.Thread(target=reply, args=("Ack.", message_id))
                                 t.start()
-                            elif slots[0] == "/clearchatlog":
+                            elif command[0] == "/clearchatlog": # clear all chat logs of current contact
                                 clear_chatlog(person=chat_with)
                                 print(f"Chat log with {chat_with} cleared.")
-                                t = threading.Thread(target=ack, args=(message_id, ))
+                                t = threading.Thread(target=reply, args=("Ack.", message_id))
                                 t.start()
-                            elif slots[0] == "/suggest":
-                                keywords = slots[1:]
-                                t = threading.Thread(target=suggest_and_reply, args=(chat_with, "chatgpt", 3, keywords, message_id))
+                            elif command[0] == "/suggest": # suggest reply thru LLM
+                                hint = command[1] if len(command) > 1 else ""
+                                t = threading.Thread(target=suggest_and_reply, args=(chat_with, "chatgpt", 3, hint, message_id, chat_id))
                                 t.start()
                 else: # regular message, record them
                     if message_type == "text":
@@ -151,22 +167,33 @@ def webhook():
                         print(f"New message recorded. Sender id: {sender_open_id}.")
         return "", 200
 
-def ask_chatgpt_and_reply(text, message_id):
-    res = ask_chatgpt(text)
+
+def ask_chatbot_and_reply(text, message_id):
+    res = random_chat_session.ask(text)
     reply(res, message_id)
 
-def suggest_and_reply(person: str, model: str, n_replies: int, keywords: list, message_id: str):
-    res = suggest_reply(person=person, model=model, n_replies=n_replies, keywords=keywords)
+
+def suggest_and_reply(person: str, model: str, n_replies: int, hint: str, message_id: str, chat_id: str):
+    keywords = []
+    intention = None
+    if len(hint) > 0:
+        hint_type = infer_hint_type(read_chatlog(person, 5), hint)
+        if hint_type == "keyword":
+            keywords = hint.strip().split()
+            intention = None
+        else:
+            keywords = []
+            intention = hint
+    res = suggest_reply(person, model, n_replies, keywords=keywords, intention=intention)
+    global chats
+    chats[chat_id]["last_suggest"] = res
     text = "LLM suggests:\n"
     for i in range(len(res)):
         text += str(i+1) + ". " + res[i] + '\n'
     print(text)
     reply(text, message_id)
 
-def ack(message_id):
-    reply("Ack", message_id)
 
-    
 def reply(text, message_id):
     headers = {
         "Authorization": f"Bearer {access_token}"

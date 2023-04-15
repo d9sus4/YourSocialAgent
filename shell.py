@@ -18,6 +18,8 @@ class YSAShell(cmd.Cmd):
         "ap": "addprompt",
         "su": "suggest",
         "num": "numsuggest",
+        "fb": "feedback",
+        "t": "test", # used for API test only
     }
     CHECK_PERSON = (
         "receive",
@@ -29,6 +31,7 @@ class YSAShell(cmd.Cmd):
         "view",
         "viewprompt",
         "addprompt",
+        "feedback",
     )
 
     # overrides
@@ -90,10 +93,18 @@ class YSAShell(cmd.Cmd):
     def do_suggest(self, arg):
         "Generate suggestions by LLM."
 
-        keywords = input("Please input keywords (enter to skip): ")
-        keywords = keywords.strip().split()
-
-        res = suggest_reply(self.person, self.model, self.num_res, keywords=keywords)
+        hint = input("Please input hint (enter to skip): ")
+        keywords = []
+        intention = None
+        if len(hint) > 0:
+            hint_type = infer_hint_type(read_chatlog(self.person, 5), hint)
+            if hint_type == "keyword":
+                keywords = hint.strip().split()
+                intention = None
+            else:
+                keywords = []
+                intention = hint
+        res = suggest_reply(self.person, self.model, self.num_res, keywords=keywords, intention=intention)
         if res is not None:
             print("LLM suggests:")
             for i in range(len(res)):
@@ -101,7 +112,7 @@ class YSAShell(cmd.Cmd):
             try:
                 choice = int('0' + input("Which one would you like to send? (0 for none): "))
                 if choice in range(1, len(res)+1):
-                    if new_message(self.person, res[choice], send=True):
+                    if new_message(self.person, res[choice-1], send=True):
                         print("Message sent!")
                     else:
                         print("Failed!")
@@ -162,6 +173,15 @@ class YSAShell(cmd.Cmd):
         "Set the number of generated suggestions."
         self.num_res = int(arg)
         print(f"Number of suggestions set to {arg}.")
+    
+    def do_feedback(self, arg):
+        pv = param_manager.get("contact", self.person)
+        commands = feedback2commands(arg, pv.get_all_params())
+        update_param("contact", self.person, commands)
+    
+    def do_test(self, arg):
+        "Used for API testing only."
+        print(feedback2commands("注意标点符号的用法", ["verbosity"]))
 
     
 def main():
