@@ -19,6 +19,13 @@ def verbose(*args):
     if VERBOSE:
         print(*args)
 
+def switch_user(newuser: str) -> bool:
+    '''Switch user in all managers. Return bool indicating success / failure.'''
+    chatlog_manager.set_user(newuser)
+    prompt_manager.set_user(newuser)
+    param_manager.set_user(newuser)
+    return True
+        
 def clear_chatlog(person: str) -> bool:
     '''Clear chat logs with a person. Return bool indicating success / failure.'''
     try:

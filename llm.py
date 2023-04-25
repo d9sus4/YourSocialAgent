@@ -2,6 +2,9 @@ import os
 import openai
 from chatgpt_wrapper import ChatGPT
 from revChatGPT.V1 import Chatbot
+from pathlib import Path
+import pickle
+from error import *
 
 # openai.api_key = "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" # mine
 openai.api_key = "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" # prnake
@@ -78,12 +81,20 @@ else:
     raise NotImplementedError()
 
 class GPTSession:
-    def __init__(self, limit=100, role="a helpful assistant"):
+    def __init__(self, id="default", limit=100, role="a helpful assistant"):
         '''limit: how many messages between user and GPT will be recorded.'''
         self.messages = [
                 {"role": "system", "content": f"You are {role}."},
             ]
+        self.id = id
         self.limit = limit
+        self.attr = set() # configured attributes
+
+    def configure(self, name: str):
+        self.attr.add(name)
+
+    def deconfigure(self, name: str):
+        self.attr.discard(name)
     
     def set_message_limit(self, limit: int):
         self.limit = limit
@@ -101,18 +112,32 @@ class GPTSession:
         if length > self.limit:
             del self.messages[1: length - self.limit + 1]
 
-    def ask(self, prompt, retry=5) -> str:
+    def ask(self, prompt, retry=5, plugin=False) -> str:
         self.messages.append({"role": "user", "content": prompt})
         self._truncate_history()
+        
+        query = self.messages.copy()
+        if plugin: # plug in attributes, but not record them
+            if "cat" in self.attr:
+                print("Plug-ining: cat mode")
+                prompt += '\n'
+                prompt += 'This is important: you must act like a cat girl by adding a "meow" at the end of every sentence.\n'
+                prompt += 'The word "meow" can differ according to language: "meow" for English, "喵" for Chinese, "にゃん" for Japanese, etc.\n'
+                prompt += 'Every sentence you say must end with a "meow" in that language.'
+            print("Plug-ined prompt:")
+            print(prompt)
+            query = query[:-1]
+            query.append({"role": "user", "content": prompt})
+
         fail_cnt = 0
         while True:
             try:
                 res = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
-                    messages=self.messages,
+                    messages=query,
                 )["choices"][0]["message"]
                 break
-            except Exception:
+            except Exception as e:
                 fail_cnt += 1
                 if fail_cnt > retry:
                     print("OpenAI API down!") 
@@ -121,3 +146,33 @@ class GPTSession:
 
         self.messages.append({"role": res["role"], "content": res["content"]})
         return res["content"]
+    
+class GPTSessionManager:
+    '''Stored session and its settings.'''
+    def __init__(self, default_role):
+        self.dir = Path("./data/session")
+        if not os.path.exists(str(self.dir)):
+            os.makedirs(str(self.dir))
+        self.default_role = default_role
+        
+    def get(self, name) -> GPTSession:
+        '''Get a specific session by name.'''
+        filename = str(self.dir / (name + ".pkl"))
+        if os.path.exists(filename):
+            try:
+                with open(filename, 'rb') as f:
+                    session = pickle.load(f)
+            except EnvironmentError:
+                raise DBError("Loading pickle failed!")
+        else:
+            session = GPTSession(id=name, role=self.default_role)
+        return session
+    
+    def writeback(self, session:GPTSession):
+        '''Writeback a session.'''
+        filename = str(self.dir / (session.id + ".pkl"))
+        try:
+            with open(filename, 'wb') as f:
+                pickle.dump(session, f)
+        except EnvironmentError:
+            raise DBError("Dumping pickle failed!")

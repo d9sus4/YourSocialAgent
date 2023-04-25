@@ -77,17 +77,18 @@ class ParamVector:
     
 
 class ParamManager:
-    def __init__(self, user="default"):
+    
+    def __init__(self):
+        self.set_user("default")
+
+    def set_user(self, user):
         self.dir = Path("./data") / user / "param"
         if not os.path.exists(str(self.dir)):
             os.makedirs(str(self.dir))
 
-    def change_user(self, newuser):
-        self.dir = Path("./data") / newuser / "param"
-
     def get(self, scope, identifier):
         '''Get a specific vector by scope (contact or context) and identifier.'''
-        filename = str(self.dir / scope / (identifier + ".pkl"))
+        filename = str(self.dir / (scope + '_' + identifier + ".pkl"))
         if os.path.exists(filename):
             try:
                 with open(filename, 'rb') as f:
@@ -102,7 +103,7 @@ class ParamManager:
         dir = str(self.dir / data.scope)
         if not os.path.exists(dir):
             os.makedirs(dir)
-        filename = str(self.dir / data.scope / (data.id + ".pkl"))
+        filename = str(self.dir / (data.scope + '_' + data.id + ".pkl"))
         try:
             with open(filename, 'wb') as f:
                 pickle.dump(data, f)

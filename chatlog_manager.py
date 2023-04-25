@@ -2,9 +2,17 @@ import os
 import json
 from pathlib import Path
 from error import *
+
 class ChatlogManager:
-    def __init__(self, dir=Path("./data")):
-        self.dir = dir
+
+    def __init__(self):
+        self.set_user("default")
+
+    def set_user(self, user):
+        self.dir = Path("./data") / user / "chatlog"
+        if not os.path.exists(str(self.dir)):
+            os.makedirs(str(self.dir))
+
 
     def add(self, text, person, send):
         filename = str(self.dir / (person + ".json"))

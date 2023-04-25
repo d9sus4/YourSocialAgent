@@ -1,6 +1,6 @@
 from flask import *
 from api import *
-from llm import GPTSession
+from llm import GPTSession, GPTSessionManager
 import json
 import requests
 from pathlib import Path
@@ -20,9 +20,10 @@ app_secret = "IudeMnAsLZkuuXhHmhFRecWssK6Rq3i2"
 open_id = "ou_f0aa230a1e9323d07f76a9a9a727c561"
 access_token = ""
 
-# chat meta info
+# chat meta info, maps group ids to user-contact pairs
 chats = {}
 # save chat meta info before exit
+filename = str(Path("./data") / "meta.json")
 def exit_handler(signum, frame):
     try:
         with open(filename, 'w', encoding="utf8") as f:
@@ -31,7 +32,6 @@ def exit_handler(signum, frame):
         raise DBError("Dumping json failed!")
     exit()
 # load chat group meta
-filename = str(Path("./data") / "chat.json")
 if os.path.exists(filename):
     try:
         with open(filename, 'r', encoding="utf8") as f:
@@ -42,8 +42,8 @@ signal.signal(signal.SIGINT, exit_handler)
 signal.signal(signal.SIGTERM, exit_handler)
 signal.signal(signal.SIGABRT, exit_handler)
 
-# GPT sessions (other than those in api.py)
-random_chat_session = GPTSession(role="a chatbot")
+# random chat GPT sessions
+random_chat_session_manager = GPTSessionManager(default_role="a chatbot")
 
 app = Flask(__name__)
 
@@ -95,8 +95,22 @@ def webhook():
                 if message_type == "text":
                     text = content.get("text", "")
                     if len(text) > 0:
-                        t = threading.Thread(target=ask_chatbot_and_reply, args=(text, message_id))
-                        t.start()
+                        if text[0] == '/': # command
+                            command = text.split(' ', 1)
+                            if command[0] == "/cat": # enable cat girl mode
+                                session = random_chat_session_manager.get(sender_open_id)
+                                if command[1] in ("1", "enable"):
+                                    session.configure("cat")
+                                    t = threading.Thread(target=reply, args=("Cat mode enabled, MEOW!", message_id))
+                                    t.start()
+                                elif command[1] in ("0", "disable"):
+                                    session.deconfigure("cat")
+                                    t = threading.Thread(target=reply, args=("Cat mode disabled. zzz...", message_id))
+                                    t.start()
+                                random_chat_session_manager.writeback(session)
+                        else: # regular query
+                            t = threading.Thread(target=ask_chatbot_and_reply, args=(text, sender_open_id, message_id))
+                            t.start()
             elif chat_type == "group": # receive from a group, act as a chat helper
                 # ensure chat_id is received
                 if chat_id is None:
@@ -116,7 +130,6 @@ def webhook():
                         text = content.get("text", "")
                         text = text.replace("@_user_1", "").strip()
                         command = text.split(' ', 1)
-                        print(command)
                         if len(command) > 0:
                             if command[0] == "/main": # set main user as the sender
                                 chats[chat_id]["main_user"] = sender_open_id
@@ -141,7 +154,6 @@ def webhook():
                                 try:
                                     picked = int(command[1].strip())
                                     # TODO
-                                    
                                 except ValueError:
                                     print("Picking not legal.")
                                     t = threading.Thread(target=reply, args=("Illegal!", message_id))
@@ -168,9 +180,12 @@ def webhook():
         return "", 200
 
 
-def ask_chatbot_and_reply(text, message_id):
-    res = random_chat_session.ask(text)
+def ask_chatbot_and_reply(text, sender, message_id):
+    '''For random chat only.'''
+    session = random_chat_session_manager.get(sender)
+    res = session.ask(text, plugin=True)
     reply(res, message_id)
+    random_chat_session_manager.writeback(session)
 
 
 def suggest_and_reply(person: str, model: str, n_replies: int, hint: str, message_id: str, chat_id: str):
