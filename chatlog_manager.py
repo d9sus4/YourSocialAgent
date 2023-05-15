@@ -15,6 +15,8 @@ class ChatlogManager:
 
 
     def add(self, text, person, send):
+        '''timestamp: str in YYYY-MM-DDTHH:MM:SSZ'''
+        # TODO
         filename = str(self.dir / (person + ".json"))
         data = []
         if os.path.exists(filename):

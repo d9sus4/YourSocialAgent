@@ -10,11 +10,8 @@ from error import *
 openai.api_key = "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" # prnake
 config={"email": "prnake@gmail.com", "password": ",ejhpQc%Q4+&$9T"}
 
-prompt_example = "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.\n\nHuman: Hello, who are you?\nAI: I am an AI created by OpenAI. How can I help you today?\nHuman: "
-start_sequence = "\nAI:"
-restart_sequence = "\nHuman: "
-
 CHATGPT_API = ["chatgpt_wrapper", "rev_chatgpt", "OpenAI"][2]
+
 
 def davinci_complete(prompt, temp=0.9, max_tokens=500, top_p=1, stop=["I:", "They:"], retry=5):
     res = []
@@ -112,29 +109,15 @@ class GPTSession:
         if length > self.limit:
             del self.messages[1: length - self.limit + 1]
 
-    def ask(self, prompt, retry=5, plugin=False) -> str:
+    def ask(self, prompt, retry=5) -> str:
         self.messages.append({"role": "user", "content": prompt})
         self._truncate_history()
-        
-        query = self.messages.copy()
-        if plugin: # plug in attributes, but not record them
-            if "cat" in self.attr:
-                print("Plug-ining: cat mode")
-                prompt += '\n'
-                prompt += 'This is important: you must act like a cat girl by adding a "meow" at the end of every sentence.\n'
-                prompt += 'The word "meow" can differ according to language: "meow" for English, "喵" for Chinese, "にゃん" for Japanese, etc.\n'
-                prompt += 'Every sentence you say must end with a "meow" in that language.'
-            print("Plug-ined prompt:")
-            print(prompt)
-            query = query[:-1]
-            query.append({"role": "user", "content": prompt})
-
         fail_cnt = 0
         while True:
             try:
                 res = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
-                    messages=query,
+                    messages=self.messages,
                 )["choices"][0]["message"]
                 break
             except Exception as e:

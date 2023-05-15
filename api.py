@@ -2,7 +2,8 @@
 import os
 import re
 import cmd
-from llm import davinci_complete, ask_chatgpt, GPTSession
+import openai
+from llm import davinci_complete, ask_chatgpt, GPTSession, get_embedding
 from chatlog_manager import ChatlogManager
 from prompt_manager import PromptManager
 from param_manager import ParamManager, ParamVector
@@ -14,6 +15,7 @@ prompt_manager = PromptManager()
 param_manager = ParamManager()
 
 VERBOSE = True
+EMBEDDING_MODEL = "text-embedding-ada-002"
 
 def verbose(*args):
     if VERBOSE:
@@ -102,8 +104,8 @@ def suggest_reply(person: str, model: str, n_replies: int, keywords: list=[], in
     verbose("Now asking LLM for reply suggestions.")
     if model == "chatgpt": # prompt is constructed through multiple steps
         
-        prompt = "You are an assisant that helps me handle my social relationships and communications with my contacts."
-        prompt = "The following is an instant messaging conversation between another person and me.\n"
+        prompt = "You are an assisant that helps me handle my social relationships and communications with my contacts.\n"
+        prompt += "The following is an instant messaging conversation between another person and me.\n"
         # read personal prompts
         try:
             personal_prompts = prompt_manager.read_all(person)
@@ -438,3 +440,9 @@ def update_param(scope: str, identifier: str, feedback_commands):
     except DBError as e:
         verbose(e)
         return False
+
+def get_embedding(text, model):
+   text = text.replace("\n", " ")
+   res = openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
+   print(res)
+   print(type(res))
