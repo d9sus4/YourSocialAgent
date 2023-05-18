@@ -1,15 +1,29 @@
 import math
+import numpy as np
 from typing import *
 import os
 import pickle
 from pathlib import Path
 from error import *
+from collections import deque, Counter
 
 default_params = [
     "verbosity",
     "seriousness",
     "politeness",
     ]
+
+levels = ["extremely low",
+          "very low",
+          "low",
+          None,
+          "high",
+          "very high",
+          "extremely high",
+        ]
+
+NUM_LEVELS = len(levels)
+COUNT_WINDOW_SIZE = 5 * NUM_LEVELS
 
 class ParamVector:
 
@@ -18,10 +32,17 @@ class ParamVector:
         self.id = identifier # name
         self.vmax = 1.0
         self.vmin = 0.0
+        # legacy
         self.hidden = {}
         for param in default_params:
             self.hidden[param] = 0.5 * (self.vmax + self.vmin)
         self.interest = {}
+        # params
+        self.params = {}
+        for p in default_params:
+            self.params[p] = {}
+            self.params[p]["value"] = NUM_LEVELS // 2
+            self.params[p]["history"] = deque(maxlen=COUNT_WINDOW_SIZE)
     
     def __str__(self):
         v = "Hidden:\n"
@@ -32,47 +53,42 @@ class ParamVector:
             v += k + ": " + str(self.interest[k]) + '\n'
         return v
 
-    def get_all_params(self):
+    def get_all_param_names(self):
         ''' Return names of all params as a list. '''
         params = []
         params.extend(self.hidden.keys())
         params.extend(self.interest.keys())
         return params
     
-    def init_new_param(self, name):
+    def init_new_param(self, name, value=None):
         self.interest[name] = 0.5 * (self.vmax + self.vmin)
 
-    def higher_param(self, name):
+    def higher_param(self, name, value=None):
         if name in self.hidden.keys():
             self.hidden[name] = 0.5 * (self.hidden[name] + self.vmax)
         elif name in self.interest.keys():
             self.interest[name] = 0.5 * (self.interest[name] + self.vmax)
 
-    def lower_param(self, name):
+    def lower_param(self, name, value=None):
         if name in self.hidden.keys():
             self.hidden[name] = 0.5 * (self.hidden[name] + self.vmin)
         elif name in self.interest.keys():
             self.interest[name] = 0.5 * (self.interest[name] + self.vmin)
 
-    def sample(self) -> Union[List, Dict, Dict]:
+    def sample(self, sigma) -> Union[List, Dict, Dict]:
         ''' Take a sample of parameters.
-        Return 3 values: list of constructed natural language phrases describing significant params, hidden dict, interest dict.'''
+        Return 3 values: list of constructed natural language phrases describing significant params, hidden dict, interest dict.
+        sigma: if sigma is not 0, this function will apply a gaussian noise to every parameter in the list'''
         hidden = self.hidden.copy()
         interest = self.interest.copy()
         all = hidden.copy()
         all.update(interest)
         prompt = []
         for param in all.keys():
-            if all[param] < 0.2 * (self.vmax - self.vmin) + self.vmin:
-                prompt.append(f"very low {param}")
-            elif all[param] < 0.4 * (self.vmax - self.vmin) + self.vmin:
-                prompt.append(f"low {param}")
-            elif all[param] < 0.6 * (self.vmax - self.vmin) + self.vmin:
-                pass
-            elif all[param] < 0.8 * (self.vmax - self.vmin) + self.vmin:
-                prompt.append(f"high {param}")
-            else:
-                prompt.append(f"very high {param}")
+            level = levels[int((all[param] - self.vmin) / (self.vmax - self.vmin) / (1.0 / len(levels)))]
+            if level is not None:
+                prompt.append(level + ' ' + param)
+
         return prompt, hidden, interest
     
 

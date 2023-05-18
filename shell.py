@@ -176,7 +176,7 @@ class YSAShell(cmd.Cmd):
     
     def do_feedback(self, arg):
         pv = param_manager.get("contact", self.person)
-        commands = feedback2commands(arg, pv.get_all_params())
+        commands = feedback2commands(arg, pv.get_all_param_names())
         update_param("contact", self.person, commands)
     
     def do_test(self, arg):

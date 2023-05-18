@@ -1,7 +1,13 @@
 import os
 import json
+import pickle
 from pathlib import Path
 from error import *
+import numpy as np
+from meta import *
+
+EMBED_INTERVAL = 600 # seconds, new message coming after this interval will be a block divider, previous block will be embedded
+EMBED_DIMENSION = 1536
 
 class ChatlogManager:
 
@@ -9,14 +15,19 @@ class ChatlogManager:
         self.set_user("default")
 
     def set_user(self, user):
+        self.user = user
         self.dir = Path("./data") / user / "chatlog"
         if not os.path.exists(str(self.dir)):
             os.makedirs(str(self.dir))
+        self.embed_dir = Path("./data") / user / "embed"
+        if not os.path.exists(str(self.dir)):
+            os.makedirs(str(self.dir))
+        self.meta_dir = Path("./data") / user / "meta"
+        if not os.path.exists(str(self.dir)):
+            os.makedirs(str(self.dir))
 
-
-    def add(self, text, person, send):
-        '''timestamp: str in YYYY-MM-DDTHH:MM:SSZ'''
-        # TODO
+    def add(self, text, person, send, timestamp:str):
+        '''it's caller's responsibility to ensure timestamp is str in YYYY-MM-DDTHH:MM:SSZ (ISO-8601)'''
         filename = str(self.dir / (person + ".json"))
         data = []
         if os.path.exists(filename):
@@ -25,14 +36,18 @@ class ChatlogManager:
                     data = json.load(f)
             except EnvironmentError:
                 raise DBError("Loading json failed!")
-        data.append({"from": "I" if send else "They", "text": text})
+        data.append({"from": "I" if send else "They", "text": text, "time": timestamp})
         try:
             with open(filename, 'w', encoding="utf8") as f:
                 json.dump(data, f, ensure_ascii=False)
         except EnvironmentError:
             raise DBError("Dumping json failed!")
+        write_meta("last_timestamp", timestamp, self.user, person)
 
     def read_all(self, person):
+        return self.read_chatlog(person)
+    
+    def read_chatlog(self, person, start_index:int=None, end_index:int=None):
         filename = str(self.dir / (person + ".json"))
         data = []
         if os.path.exists(filename):
@@ -41,7 +56,52 @@ class ChatlogManager:
                     data = json.load(f)
             except EnvironmentError:
                 raise DBError("Loading json failed!")
-        return data
+        return data[start_index: end_index]
+
+    def update_embed(self, embed:np.array, person, start_index:int, end_index:int):
+        '''embed from start to end
+        each embed is a EMBED_DIMENSION-dim numpy array, stored in a list in a dict in a pickle
+        '''
+        embed_filename = str(self.embed_dir / (person + ".json"))
+        if os.path.exists(embed_filename):
+            try:
+                with open(embed_filename, 'rb') as f:
+                    embed_dict = pickle.load(f)
+            except EnvironmentError:
+                raise DBError("Loading pickle failed!")
+        else:
+            embed_dict = {
+                "vecs": [],
+                "indices": [], # each entry is a pair: start index and end index of the corresponding vector
+                }
+        embed_dict["indices"].append([start_index, end_index])
+        embed_dict["vecs"].append(embed)
+        try:
+            with open(embed_filename, 'wb') as f:
+                pickle.dump(embed_dict, f)
+        except EnvironmentError:
+            raise DBError("Dumping pickle failed!")
+        write_meta("last_embed_end_index", end_index, self.user, person)
+
+    def get_all_embeds(self):
+        filenames = os.listdir(str(self.embed_dir))
+        all_persons = [os.path.splitext(file)[0] for file in filenames]
+        all_embeds = {}
+        for person in all_persons:
+            all_embeds[person] = self.get_embeds(person)
+        return all_embeds
+
+    def get_embeds(self, person:str=None):
+        '''get all embeds of a person's chatlog
+        return vecs: list of numpy arrays, indices: list of int pairs (start, end)'''
+        embed_filename = str(self.embed_dir / (person + ".json"))
+        if os.path.exists(embed_filename):
+            try:
+                with open(embed_filename, 'rb') as f:
+                    embed_dict = pickle.load(f)
+            except EnvironmentError:
+                raise DBError("Loading pickle failed!")
+            return embed_dict["vecs"], embed_dict["indices"]
 
     def clear(self, person):
         filename = str(self.dir / (person + ".json"))
@@ -50,3 +110,4 @@ class ChatlogManager:
                 os.remove(filename)
             except EnvironmentError:
                 raise DBError("Clearing chatlog failed!")
+        write_meta("last_timestamp", "", self.user, person)
