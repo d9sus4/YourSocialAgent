@@ -55,7 +55,6 @@ class YSAShell(cmd.Cmd):
 
     # params
     person = None
-    model = ["davinci", "chatgpt"][1]
     num_res = 3
 
     # commands
@@ -70,6 +69,21 @@ class YSAShell(cmd.Cmd):
         self.person = arg.strip()
         print(f"Chatting with {self.person}.")
         self.prompt = f"({self.person}) "
+        # check if person has prompt. if not, guide user to add some:
+        prompts = read_prompt(self.person)
+        if prompts is not None and len(prompts) == 0:
+            print (f"It seems you are chatting with a new contact.")
+            try:
+                choice = int(input(f"What is {self.person}'s gender? (1: male; 2: female; 0: other): "))
+                set_gender(self.person, ["other", "male", "female"][choice])
+            except ValueError:
+                print("Illegal input!")
+            while True:
+                des = input(f"Describe {self.person}'s relationship to you (enter to finish): ")
+                if len(des) > 0:
+                    new_prompt(self.person, contact_description_to_prompts(self.person, des))
+                else:
+                    break
     
     def do_clear(self, arg):
         "Clear chat logs with the current person."
@@ -92,7 +106,6 @@ class YSAShell(cmd.Cmd):
     
     def do_suggest(self, arg):
         "Generate suggestions by LLM."
-
         hint = input("Please input hint (enter to skip): ")
         keywords = []
         intention = None
@@ -104,7 +117,7 @@ class YSAShell(cmd.Cmd):
             else:
                 keywords = []
                 intention = hint
-        res = suggest_reply(self.person, self.model, self.num_res, keywords=keywords, intention=intention)
+        res = suggest_messages(self.person, self.num_res, keywords=keywords, intention=intention, randomness=0)
         if res is not None:
             print("LLM suggests:")
             for i in range(len(res)):
@@ -164,11 +177,6 @@ class YSAShell(cmd.Cmd):
         else:
             print("Failed!")
 
-    def do_model(self, arg):
-        "Switch model."
-        self.model = arg
-        print(f"Model switched to {arg}.")
-
     def do_numsuggest(self, arg):
         "Set the number of generated suggestions."
         self.num_res = int(arg)
@@ -177,7 +185,7 @@ class YSAShell(cmd.Cmd):
     def do_feedback(self, arg):
         pv = param_manager.get("contact", self.person)
         commands = feedback2commands(arg, pv.get_all_param_names())
-        update_param("contact", self.person, commands)
+        update_param_by_commands("contact", self.person, commands)
     
     def do_test(self, arg):
         "Used for API testing only."

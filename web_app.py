@@ -288,7 +288,7 @@ def suggest_query(person: str, model: str, n_replies: int, hint: str, message_id
         else:
             keywords = []
             intention = hint
-    res = suggest_reply(person, model, n_replies, keywords=keywords, intention=intention)
+    res = suggest_replies(person, model, n_replies, keywords=keywords, intention=intention)
     global chats
     chats[chat_id]["last_suggest"] = res
     chats[chat_id]["wait_for_pick"] = True
@@ -305,7 +305,7 @@ def suggest_query(person: str, model: str, n_replies: int, hint: str, message_id
 def feedback_query(feedback_msg, scope, id, message_id):
     pv = param_manager.get(scope, id)
     commands = feedback2commands(feedback_msg, pv.get_all_param_names())
-    update_param(scope, id, commands)
+    update_param_by_commands(scope, id, commands)
     commands_plain = '\n'.join(commands)
     print(f"Following commands have been applied to param vector ({pv.scope}, {pv.id}):\n{commands_plain}")
     reply("Feedback has been learnt.", message_id)

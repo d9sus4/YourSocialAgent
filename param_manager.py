@@ -6,14 +6,15 @@ import pickle
 from pathlib import Path
 from error import *
 from collections import deque, Counter
+import random
 
-default_params = [
+DEFAULT_PARAMS = [
     "verbosity",
     "seriousness",
     "politeness",
     ]
 
-levels = ["extremely low",
+LEVELS = ["extremely low",
           "very low",
           "low",
           None,
@@ -22,74 +23,71 @@ levels = ["extremely low",
           "extremely high",
         ]
 
-NUM_LEVELS = len(levels)
+NUM_LEVELS = len(LEVELS) # [0, 1, ..., NUM_LEVELS-1]
 COUNT_WINDOW_SIZE = 5 * NUM_LEVELS
+GAUSSIAN_FILTER_SIGMA_UNIT = NUM_LEVELS / 3
+COUNT_BIAS = 1
 
 class ParamVector:
 
     def __init__(self, scope: str, identifier: str):
         self.scope = scope # scope type, contact or context
         self.id = identifier # name
-        self.vmax = 1.0
-        self.vmin = 0.0
-        # legacy
-        self.hidden = {}
-        for param in default_params:
-            self.hidden[param] = 0.5 * (self.vmax + self.vmin)
-        self.interest = {}
-        # params
-        self.params = {}
-        for p in default_params:
-            self.params[p] = {}
-            self.params[p]["value"] = NUM_LEVELS // 2
-            self.params[p]["history"] = deque(maxlen=COUNT_WINDOW_SIZE)
+        self.params = {} # {name: value}
+        self.history = {} # {name: deque}
+        for p in DEFAULT_PARAMS:
+            self.params[p] = NUM_LEVELS // 2
+            self.history[p] = deque(maxlen=COUNT_WINDOW_SIZE)
     
     def __str__(self):
-        v = "Hidden:\n"
-        for k in self.hidden.keys():
-            v += k + ": " + str(self.hidden[k]) + '\n'
-        v += "\nInterest:\n"
-        for k in self.interest.keys():
-            v += k + ": " + str(self.interest[k]) + '\n'
+        v = ""
+        for k in self.params.keys():
+            v += k + ": " + str(self.params[k]) + '\n'
         return v
 
     def get_all_param_names(self):
         ''' Return names of all params as a list. '''
-        params = []
-        params.extend(self.hidden.keys())
-        params.extend(self.interest.keys())
-        return params
+        return self.params.keys()
     
     def init_new_param(self, name, value=None):
-        self.interest[name] = 0.5 * (self.vmax + self.vmin)
+        self.params[name] = value if value is not None else NUM_LEVELS // 2
+        self.history[name] = deque(maxlen=COUNT_WINDOW_SIZE)
 
-    def higher_param(self, name, value=None):
-        if name in self.hidden.keys():
-            self.hidden[name] = 0.5 * (self.hidden[name] + self.vmax)
-        elif name in self.interest.keys():
-            self.interest[name] = 0.5 * (self.interest[name] + self.vmax)
+    def higher_param(self, name):
+        self.params[name] = int((self.params[name] + NUM_LEVELS) / 2)
 
     def lower_param(self, name, value=None):
-        if name in self.hidden.keys():
-            self.hidden[name] = 0.5 * (self.hidden[name] + self.vmin)
-        elif name in self.interest.keys():
-            self.interest[name] = 0.5 * (self.interest[name] + self.vmin)
+        self.params[name] = int(self.params[name] / 2)
 
-    def sample(self, sigma) -> Union[List, Dict, Dict]:
+    def sample(self, randomness:int=0, k:int=1) -> List[Dict]:
         ''' Take a sample of parameters.
-        Return 3 values: list of constructed natural language phrases describing significant params, hidden dict, interest dict.
-        sigma: if sigma is not 0, this function will apply a gaussian noise to every parameter in the list'''
-        hidden = self.hidden.copy()
-        interest = self.interest.copy()
-        all = hidden.copy()
-        all.update(interest)
+        Return a list of params dicts, num = k.
+        randomness: scale of the gaussian filter'''
+        def get_gaussian_y(x, mu, sigma):
+            y = (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-(x - mu)**2 / (2 * sigma**2))
+            return y
         prompt = []
-        for param in all.keys():
-            level = levels[int((all[param] - self.vmin) / (self.vmax - self.vmin) / (1.0 / len(levels)))]
-            if level is not None:
-                prompt.append(level + ' ' + param)
+        if randomness == 0:
+            return [self.params.copy() for _ in range(k)]
+        else:
+            result = [{} for _ in range(k)]
+            for p in self.params.keys():
+                counter = Counter(self.history[p])
+                options = list(counter.keys())
+                weights = []
+                for v in options:
+                    weights.append((counter[v] + COUNT_BIAS) * get_gaussian_y(v, mu=self.params[p], sigma=randomness*GAUSSIAN_FILTER_SIGMA_UNIT))
+                sample = random.choices(options, weights=weights, k=k)
+                for i in range(k):
+                    result[i][p] = sample[i]
+            return result
 
-        return prompt, hidden, interest
+        
+    def update(self, params:dict):
+        for p in params.keys():
+            if p in self.params.keys():
+                self.params[p] = params[p]
+                self.history[p].append(params[p])
     
 
 class ParamManager:

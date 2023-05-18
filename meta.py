@@ -17,8 +17,7 @@ def read_meta(key, user, contact):
                 data = json.load(f)
         except EnvironmentError:
             raise DBError("Loading json failed!")
-        if key is not None:
-            return data.get(key, None)
+        return data.get(key, None)
     return None
 
 def write_meta(key, value, user, contact):

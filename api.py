@@ -3,11 +3,16 @@ import os
 import re
 import cmd
 import openai
-from llm import davinci_complete, ask_chatgpt, GPTSession, get_embedding
+from llm import davinci_complete, ask_chatgpt, GPTSession
 from chatlog_manager import ChatlogManager
 from prompt_manager import PromptManager
-from param_manager import ParamManager, ParamVector
+from param_manager import ParamManager, ParamVector, LEVELS
 from error import *
+from typing import *
+from meta import *
+import multiprocessing
+from datetime import datetime
+import pytz
 
 # DB managers
 chatlog_manager = ChatlogManager()
@@ -16,10 +21,16 @@ param_manager = ParamManager()
 
 VERBOSE = True
 EMBEDDING_MODEL = "text-embedding-ada-002"
+NUM_LOCAL_CHATLOG_MESSAGES = 20
+DEFAULT_TIMEZONE = pytz.timezone('Asia/Shanghai')
 
 def verbose(*args):
     if VERBOSE:
         print(*args)
+
+def get_user()->str:
+    '''Get current user.'''
+    return chatlog_manager.user
 
 def switch_user(newuser: str) -> bool:
     '''Switch user in all managers. Return bool indicating success / failure.'''
@@ -99,7 +110,7 @@ Here's the conversation:
     verbose("Hint type: intention")
     return "intention"
     
-def suggest_reply(person: str, model: str, n_replies: int, keywords: list=[], intention: str=None) -> list:
+def suggest_replies(person: str, model: str, n_replies: int, keywords: list=[], intention: str=None) -> list: # legacy
     '''Suggest replies to a person. Return None if anything goes wrong.'''
     verbose("Now asking LLM for reply suggestions.")
     if model == "chatgpt": # prompt is constructed through multiple steps
@@ -212,6 +223,92 @@ def suggest_reply(person: str, model: str, n_replies: int, keywords: list=[], in
     
     return res
 
+def _ask_once(prompt):
+        verbose("Sending following prompt to ChatGPT:")
+        verbose(prompt)
+        session = GPTSession()
+        reply = session.ask(prompt)
+        return reply
+
+def suggest_messages(person: str, num_replies: int, keywords: list=[], intention: str=None, randomness=0) -> List[str]:
+    '''Suggest messages to a person. Return None if anything goes wrong.'''
+    try:
+        verbose("Now asking ChatGPT for messaging suggestions.")
+        #1 prompt is constructed through multiple steps
+        instr_prompt = "You are an assisant that helps me message to my contacts.\n"
+        instr_prompt += f"You are going to help me write a new message to send to {person}.\n"
+
+        # read gender: "male" or "female" or None
+        contact_gender = get_gender(person)
+        if contact_gender is None:
+            contact_gender = "other"
+
+        #2 read personal prompts
+        personal_prompt = ""
+        personal_prompt_texts = prompt_manager.read_all(person)
+        if len(personal_prompt_texts) > 0:
+            personal_prompt = f"Here is some background information about {person}:\n"
+            for line in personal_prompt_texts:
+                personal_prompt += line + '\n'
+
+        #3 prompting parameters
+        pv = param_manager.get("contact", person)
+        sampled_params = pv.sample(randomness=randomness, k=num_replies)
+        param_prompts = []
+        for params in sampled_params:
+            param_prompt = "The message you write must have following characteristics: "
+            flag = False
+            for p in params.keys():
+                level = LEVELS[params[p]]
+                if level is not None:
+                    param_prompt += LEVELS[params[p]] + ' ' + p + ", "
+                    flag = True
+            if flag:
+                param_prompt = param_prompt[:-2] + ".\n"
+                param_prompts.append(param_prompt)
+            else:
+                param_prompts.append("")
+        
+        #4 prompting intention
+        intention_prompt = ""
+        if intention is not None:
+            intention_prompt = "The message you write must express the following intention: "
+            intention_prompt += intention
+            intention_prompt += '\n'
+        
+        #5 prompting keywords
+        keyword_prompt = ""
+        if len(keywords) > 0:
+            keyword_prompt = "And every one of the following keywords should be included in the message you write: "
+            for keyword in keywords:
+                keyword_prompt += keyword + ", "
+            keyword_prompt = keyword_prompt[:-2] + ".\n"
+        
+        #5 read local chatlogs
+        final_prompt = "Here is the current context you will work on and you should write the new message in the same language as the previous conversation:"
+        local_chatlog = chatlog_manager.read_all(person)[-NUM_LOCAL_CHATLOG_MESSAGES:]
+        pronoun = {"male": "He", "female": "She", "other": "They"}[contact_gender]
+        for msg in local_chatlog:
+            final_prompt += {"I": "I", "They": person}[msg["from"]] + ": " + msg["text"] + '\n'
+        final_prompt += "I: "
+        
+        # assemble and send prompts
+        all_prompts = []
+        for i in range(num_replies):
+            param_prompt = param_prompts[i]
+            prompt_list = [instr_prompt, personal_prompt, param_prompt, intention_prompt, keyword_prompt, final_prompt]
+            prompt = "\n".join([x for x in prompt_list if len(x) > 0])
+            all_prompts.append(prompt)
+        res = []
+        with multiprocessing.Pool(num_replies) as pool:
+            for reply in pool.map(_ask_once, [p for p in all_prompts]):
+                res.append(reply)
+        return res
+
+    except Exception as e:
+        verbose(e)
+        return None
+
 def read_chatlog(person: str, recent_n: int=0) -> list:
     '''Read chat logs of a person. Return None if anything goes wrong.'''
     try:
@@ -230,10 +327,13 @@ def read_prompt(person: str) -> list:
         verbose(e)
         return None
     
-def new_message(person: str, text: str, send: bool=False) -> bool:
+def new_message(person: str, text: str, send: bool=False, timestamp=None) -> bool:
     '''Receive or send a new message. Return bool indicating success / failure.'''
+    if timestamp is None:
+        now = datetime.now(DEFAULT_TIMEZONE)
+        timestamp = now.isoformat()
     try:
-        chatlog_manager.add(text, person, send=send)
+        chatlog_manager.add(text, person, send=send, timestamp=timestamp)
         return True
     except DBError as e:
         verbose(e)
@@ -418,7 +518,7 @@ You will work on a new case. I will give you current parameters and the feedback
     lines = [line for line in res.splitlines() if line.strip()]
     return lines
 
-def update_param(scope: str, identifier: str, feedback_commands):
+def update_param_by_commands(scope: str, identifier: str, feedback_commands):
     '''Execute feedback command on a param file.'''
     verbose("Updating params...")
     try:
@@ -441,8 +541,55 @@ def update_param(scope: str, identifier: str, feedback_commands):
         verbose(e)
         return False
 
+def contact_description_to_prompts(person: str, des: str):
+    prompt = r"""You are an assistant who generates memos for you on how to communicate through text messages with specific contacts.
+I will give you the contact's name, gender, and a comment about the contact. You will summary my comment, infer the manners I should follow messaging to the contact, and write a memo in English for me. Avoid using pronouns like "he" or "she" in your memo, just use the contact's name, and keep the name in its original language if not English. Write the memo in my perspective. 
+The process is as follows:
+
+Contact name: Adam
+Gender: male
+Comment: He is my close friend
+Memo: Adam is a close friend of mine. I can adopt a casual and informal tone communicating with him. I can be relaxed, friendly, and use a language style that reflects my familiarity and comfort with him.
+
+Contact name: エリカ
+Gender: female
+Comment: 私の彼女です
+Memo: エリカ is my girlfriend. I shall adopt a warm, affectionate, and intimate tone in most of the time. I can be more relaxed, playful, and use language that reflects the level of comfort and familiarity we have with each other.
+
+Contact name: 李智
+Gender: male
+Comment: 他是我的博导
+Memo: 李智 is my PhD advisor. It is important to adopt a respectful and formal tone for me when communicating with professors. Maintaining a professional and courteous tone is essential, while using polite language, addressing him with proper titles (such as "教授" or "Prof."), and following appropriate etiquette are also to be considered.
+
+Contact name: Jane
+Gender: female
+Comment: She's my mom and I love her
+Memo: Jane is my dearest mother. I shall adopt a respectful and affectionate tone, and show appreciation for her love, care, and guidance by speaking with kindness and consideration."
+
+"""
+    prompt += f"Contact name: {person}\n"
+    prompt += f"Gender: {get_gender(person)}\n"
+    prompt += f"Comment: {des}\n"
+    prompt += "Memo: "
+    verbose("Sending following prompt to ChatGPT:")
+    verbose(prompt)
+    session = GPTSession()
+    res = session.ask(prompt)
+    verbose("ChatGPT replies:")
+    verbose(res)
+    return res
+
 def get_embedding(text, model):
    text = text.replace("\n", " ")
    res = openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
    print(res)
    print(type(res))
+   return res
+
+def set_gender(person: str, gender: str):
+    '''gender: male or female or other'''
+    write_meta("gender", gender, get_user(), person)
+
+def get_gender(person: str):
+    '''gender: male or female or other'''
+    return read_meta("gender", get_user(), person)
