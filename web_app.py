@@ -281,7 +281,7 @@ def suggest_query(person: str, model: str, n_replies: int, hint: str, message_id
     keywords = []
     intention = None
     if len(hint) > 0:
-        hint_type = infer_hint_type(read_chatlog(person, 5), hint)
+        hint_type = infer_hint_type(person, hint)
         if hint_type == "keyword":
             keywords = hint.strip().split()
             intention = None

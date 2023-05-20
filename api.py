@@ -10,9 +10,11 @@ from param_manager import ParamManager, ParamVector, LEVELS
 from error import *
 from typing import *
 from meta import *
-import multiprocessing
-from datetime import datetime
+from multiprocessing import Pool
+from threading import Thread
+from datetime import datetime, timedelta
 import pytz
+import numpy as np
 
 # DB managers
 chatlog_manager = ChatlogManager()
@@ -22,7 +24,15 @@ param_manager = ParamManager()
 VERBOSE = True
 EMBEDDING_MODEL = "text-embedding-ada-002"
 NUM_LOCAL_CHATLOG_MESSAGES = 20
+INFERENCE_WINDOW_SIZE = 5
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Shanghai')
+AUTO_EMBED = True
+EMBED_INTERVAL = 900 # seconds, new message coming after this interval will be a block divider, previous block will be embedded
+EMBED_DIMENSION = 1536
+K_NEARST = 10
+
+# module switches
+RETRIEVED_CHATLOGS_ON = True
 
 def verbose(*args):
     if VERBOSE:
@@ -59,12 +69,11 @@ def clear_prompt(person: str) -> bool:
         verbose(e)
         return False
 
-def infer_hint_type(context: list, hint: str) -> str:
-    '''context is a list of dicts and each dict is {"from": either "I" or "They", "text": "something"};
-    usually it will have a short length such as 1 or 2.
-    hint is what user types in.
+def infer_hint_type(person: str, hint: str) -> str:
+    '''hint: whatever user types in.
     This function will let the LLM determine whether the hint belongs to "keyword" or "intention".
     '''
+    context = chatlog_manager.read_chatlog(person, -INFERENCE_WINDOW_SIZE)
     prompt = r"""During conversation, human tends to come up with some simple but straight thoughts at first, then organize and accomplish them into natural language.
 Thoughts can either be keywords or intentions. For example:
 
@@ -236,7 +245,7 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
         verbose("Now asking ChatGPT for messaging suggestions.")
         #1 prompt is constructed through multiple steps
         instr_prompt = "You are an assisant that helps me message to my contacts.\n"
-        instr_prompt += f"You are going to help me write a new message to send to {person}.\n"
+        instr_prompt += f"You are going to imitate my writing style and help me write a new message to send to one of my contact named: {person}.\n"
 
         # read gender: "male" or "female" or None
         contact_gender = get_gender(person)
@@ -250,8 +259,8 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
             personal_prompt = f"Here is some background information about {person}:\n"
             for line in personal_prompt_texts:
                 personal_prompt += line + '\n'
-
-        #3 prompting parameters
+            
+        #4 prompting parameters
         pv = param_manager.get("contact", person)
         sampled_params = pv.sample(randomness=randomness, k=num_replies)
         param_prompts = []
@@ -269,14 +278,14 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
             else:
                 param_prompts.append("")
         
-        #4 prompting intention
+        #5 prompting intention
         intention_prompt = ""
         if intention is not None:
             intention_prompt = "The message you write must express the following intention: "
             intention_prompt += intention
             intention_prompt += '\n'
         
-        #5 prompting keywords
+        #6 prompting keywords
         keyword_prompt = ""
         if len(keywords) > 0:
             keyword_prompt = "And every one of the following keywords should be included in the message you write: "
@@ -284,23 +293,35 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
                 keyword_prompt += keyword + ", "
             keyword_prompt = keyword_prompt[:-2] + ".\n"
         
-        #5 read local chatlogs
-        final_prompt = "Here is the current context you will work on and you should write the new message in the same language as the previous conversation:"
+        #7 read local chatlogs
+        final_prompt = "Here is the current context you will work on and you should write the new message in the same language as the previous conversation:\n"
         local_chatlog = chatlog_manager.read_all(person)[-NUM_LOCAL_CHATLOG_MESSAGES:]
         pronoun = {"male": "He", "female": "She", "other": "They"}[contact_gender]
-        for msg in local_chatlog:
-            final_prompt += {"I": "I", "They": person}[msg["from"]] + ": " + msg["text"] + '\n'
+        local_chatlog_str = chatlog_to_str(person, local_chatlog)
+        final_prompt += local_chatlog_str
         final_prompt += "I: "
-        
+
+        #3 retrieve related chatlogs
+        retrieved_prompt = ""
+        if RETRIEVED_CHATLOGS_ON:
+            local_embed = get_embedding(local_chatlog_str)
+            frags = find_nearest_k_fragments(local_embed) #[(person, si, ei)]
+            if len(frags) > 0:
+                retrieved_prompt = "Here are some related chatlog fragments where you may learn useful information about me and my contacts, as well as my writing style:\n"
+                for i, (contact, si, ei) in enumerate(frags):
+                    retrieved_logs = read_chatlog(contact, si, ei)
+                    retrieved_prompt += f"Fragment #{i}, contact name = {contact}\n"
+                    retrieved_prompt += chatlog_to_str(contact, retrieved_logs)
+            
         # assemble and send prompts
         all_prompts = []
         for i in range(num_replies):
             param_prompt = param_prompts[i]
-            prompt_list = [instr_prompt, personal_prompt, param_prompt, intention_prompt, keyword_prompt, final_prompt]
+            prompt_list = [instr_prompt, personal_prompt, retrieved_prompt, param_prompt, intention_prompt, keyword_prompt, final_prompt]
             prompt = "\n".join([x for x in prompt_list if len(x) > 0])
             all_prompts.append(prompt)
         res = []
-        with multiprocessing.Pool(num_replies) as pool:
+        with Pool(num_replies) as pool:
             for reply in pool.map(_ask_once, [p for p in all_prompts]):
                 res.append(reply)
         return res
@@ -309,11 +330,11 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
         verbose(e)
         return None
 
-def read_chatlog(person: str, recent_n: int=0) -> list:
+def read_chatlog(person: str, start_index:int=None, end_index:int=None) -> list:
     '''Read chat logs of a person. Return None if anything goes wrong.'''
     try:
-        data = chatlog_manager.read_all(person)
-        return data[-recent_n:]
+        data = chatlog_manager.read_chatlog(person, start_index, end_index)
+        return data
     except DBError as e:
         verbose(e)
         return None
@@ -328,17 +349,41 @@ def read_prompt(person: str) -> list:
         return None
     
 def new_message(person: str, text: str, send: bool=False, timestamp=None) -> bool:
-    '''Receive or send a new message. Return bool indicating success / failure.'''
-    if timestamp is None:
-        now = datetime.now(DEFAULT_TIMEZONE)
-        timestamp = now.isoformat()
+    '''Receive or send a new message. Return bool indicating success / failure.
+    timestamp is in ISO format, "+xs", or None.'''
     try:
-        chatlog_manager.add(text, person, send=send, timestamp=timestamp)
+        now = datetime.now(DEFAULT_TIMEZONE)
+        ts = now.isoformat()
+        last_ts = read_meta("last_timestamp", get_user(), person)
+        if timestamp is not None:
+            if is_iso_timestamp(timestamp):
+                ts = timestamp
+            else:
+                seconds = extract_num_from_plus_x_s_string(timestamp)
+                if seconds is not None and is_iso_timestamp(last_ts):
+                    dt = datetime.fromisoformat(last_ts)
+                    new_dt = dt + timedelta(seconds=seconds)
+                    ts = new_dt.isoformat()
+        chatlog_manager.add(text, person, send=send, timestamp=ts)
+        if AUTO_EMBED:
+            if last_ts is not None:
+                new_datetime = datetime.fromisoformat(ts)
+                last_datetime = datetime.fromisoformat(last_ts)
+                time_diff = (new_datetime - last_datetime).total_seconds()
+                verbose(f"It's been {time_diff}s since the last message.")
+                if time_diff >= EMBED_INTERVAL:
+                    verbose("Starting new auto embedding thread...")
+                    last_embed_end_index = read_meta("last_embed_end_index", get_user(), person)
+                    embed_end_index = read_meta("counter", get_user(), person) - 1
+                    if last_embed_end_index is None:
+                        last_embed_end_index = 0
+                    t = Thread(target=summarize_and_embed, args=(person, last_embed_end_index, embed_end_index))
+                    t.start()
         return True
     except DBError as e:
         verbose(e)
         return False
-
+    
 def new_prompt(person: str, prompt: str) -> bool:
     '''Add prompt to a person. Return bool indicating success / failure.'''
     try:
@@ -579,11 +624,10 @@ Memo: Jane is my dearest mother. I shall adopt a respectful and affectionate ton
     verbose(res)
     return res
 
-def get_embedding(text, model):
+def get_embedding(text, model=EMBEDDING_MODEL):
    text = text.replace("\n", " ")
    res = openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
-   print(res)
-   print(type(res))
+   verbose(f"Got a new embedding of length {len(res)}.")
    return res
 
 def set_gender(person: str, gender: str):
@@ -593,3 +637,68 @@ def set_gender(person: str, gender: str):
 def get_gender(person: str):
     '''gender: male or female or other'''
     return read_meta("gender", get_user(), person)
+
+def chatlog_to_str(person: str, logs: list):
+    '''Ends with an extra empty line'''
+    log_str = ""
+    for log in logs:
+        log_str += {"I": "I", "They": person}[log["from"]] + ": " + log["text"] + '\n'
+    return log_str
+
+def summarize_chatlog_fragment(person: str, start_index, end_index=None):
+    '''Summarize a fragment of chatlog into a sentence. Return string.'''
+    logs = chatlog_manager.read_chatlog(person, start_index=start_index, end_index=end_index)
+    log_str = chatlog_to_str(person, logs)
+    prompt = f"The following is a fragment of my chat log with {person}. You will summarize the topic of the conversation into one sentence in English. You will write from my perspective.\n\n"
+    prompt += log_str
+    prompt += "\nSummary (in English):"
+    session = GPTSession()
+    verbose("Sending following prompt to ChatGPT:")
+    verbose(prompt)
+    res = session.ask(prompt)
+    verbose("ChatGPT replies:")
+    verbose(res)
+    return res
+
+def summarize_and_embed(person: str, start_index, end_index=None):
+    summary = summarize_chatlog_fragment(person, start_index=start_index, end_index=end_index)
+    embed = get_embedding(summary)
+    embed = np.array(embed)
+    chatlog_manager.update_embed(embed, person, start_index=start_index, end_index=end_index)
+    verbose(f"Embedding of {person} from {start_index} to {end_index} finished!")
+
+def is_iso_timestamp(timestamp: str) -> bool:
+    if timestamp is None:
+        return False
+    try:
+        datetime.fromisoformat(timestamp)
+        return True
+    except ValueError:
+        return False
+
+def extract_num_from_plus_x_s_string(string: str):
+    pattern = r"\+(\d+)s"
+    match = re.match(pattern, string)
+    if match:
+        return int(match.group(1))
+    else:
+        return None
+
+def find_nearest_k_fragments(embed:np.array, k:int=K_NEARST):
+    '''From all chat logs of all contacts, find k fragments that have the nearest embedding vector to a given vector
+    Return a list of (person, start_index, end_index) tuples'''
+    all_embeds = chatlog_manager.get_all_embeds()
+    contacts = all_embeds.keys()
+    # print(contacts) # dict_keys(['Tom'])
+    # print(type(all_embeds["Tom"])) # <class 'list'>
+    # print(all_embeds["Tom"]) # [(array([ 0.00778798, -0.03730292,  0.0120602 , ..., -0.00377308, -0.00556195, -0.01985438]), 0, 4)]
+    distances = []
+    indices = [] # entry: (person, start_index, end_index) tuple
+    for contact in contacts:
+        for vec, si, ei in all_embeds[contact]:
+            distance = np.linalg.norm(vec - embed)  # 计算欧几里得距离
+            distances.append(distance)
+            indices.append((contact, si, ei))
+    k_indices = np.argsort(distances)[:k]
+    k_nearest_frags = [indices[i] for i in k_indices]
+    return k_nearest_frags

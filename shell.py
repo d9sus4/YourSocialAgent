@@ -69,15 +69,16 @@ class YSAShell(cmd.Cmd):
         self.person = arg.strip()
         print(f"Chatting with {self.person}.")
         self.prompt = f"({self.person}) "
-        # check if person has prompt. if not, guide user to add some:
-        prompts = read_prompt(self.person)
-        if prompts is not None and len(prompts) == 0:
+        # check if person's gender has been save. if not, guide user to provide some knowledge about this person:
+        gender = get_gender(self.person)
+        if gender is None:
             print (f"It seems you are chatting with a new contact.")
-            try:
-                choice = int(input(f"What is {self.person}'s gender? (1: male; 2: female; 0: other): "))
-                set_gender(self.person, ["other", "male", "female"][choice])
-            except ValueError:
-                print("Illegal input!")
+            if get_gender(self.person) is None:
+                try:
+                    choice = int(input(f"What is {self.person}'s gender? (1: male; 2: female; 0: other): "))
+                    set_gender(self.person, ["other", "male", "female"][choice])
+                except ValueError:
+                    print("Illegal input!")
             while True:
                 des = input(f"Describe {self.person}'s relationship to you (enter to finish): ")
                 if len(des) > 0:
@@ -110,7 +111,7 @@ class YSAShell(cmd.Cmd):
         keywords = []
         intention = None
         if len(hint) > 0:
-            hint_type = infer_hint_type(read_chatlog(self.person, 5), hint)
+            hint_type = infer_hint_type(self.person, hint)
             if hint_type == "keyword":
                 keywords = hint.strip().split()
                 intention = None
@@ -158,14 +159,24 @@ class YSAShell(cmd.Cmd):
 
     def do_receive(self, arg):
         "Receive a message from the current person."
-        if new_message(self.person, arg, send=False):
+        ts = None
+        ts_idx = arg.rfind('@')
+        if ts_idx >= 0:
+            ts = arg[ts_idx+1:]
+            arg = arg[:ts_idx]
+        if new_message(self.person, arg, send=False, timestamp=ts):
             print("Message received.")
         else:
             print("Failed!")
 
     def do_send(self, arg):
         "Send a message to the current person"
-        if new_message(self.person, arg, send=True):
+        ts = None
+        ts_idx = arg.rfind('@')
+        if ts_idx >= 0:
+            ts = arg[ts_idx+1:]
+            arg = arg[:ts_idx]
+        if new_message(self.person, arg, send=True, timestamp=ts):
             print("Message sent.")
         else:
             print("Failed!")

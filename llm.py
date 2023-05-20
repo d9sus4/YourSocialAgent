@@ -5,6 +5,7 @@ from revChatGPT.V1 import Chatbot
 from pathlib import Path
 import pickle
 from error import *
+from threading import Thread
 
 # openai.api_key = "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" # mine
 openai.api_key = "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" # prnake
@@ -125,7 +126,7 @@ class GPTSession:
                 if fail_cnt > retry:
                     print("OpenAI API down!") 
                     return "Failed to reach ChatGPT!"
-                print(f"Failed to access OpenAI API, count={fail_cnt}. Retrying...")
+                print(f"Failed to access OpenAI API, count={fail_cnt}.\nReason: {e}\nRetrying...")
 
         self.messages.append({"role": res["role"], "content": res["content"]})
         return res["content"]
