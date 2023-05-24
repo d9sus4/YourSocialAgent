@@ -26,7 +26,7 @@ EMBEDDING_MODEL = "text-embedding-ada-002"
 NUM_LOCAL_CHATLOG_MESSAGES = 20
 INFERENCE_WINDOW_SIZE = 5
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Shanghai')
-AUTO_EMBED = True
+AUTO_EMBED = False
 EMBED_INTERVAL = 900 # seconds, new message coming after this interval will be a block divider, previous block will be embedded
 EMBED_DIMENSION = 1536
 K_NEARST = 10
@@ -241,94 +241,101 @@ def _ask_once(prompt):
 
 def suggest_messages(person: str, num_replies: int, keywords: list=[], intention: str=None, randomness=0) -> List[str]:
     '''Suggest messages to a person. Return None if anything goes wrong.'''
-    try:
-        verbose("Now asking ChatGPT for messaging suggestions.")
-        #1 prompt is constructed through multiple steps
-        instr_prompt = "You are an assisant that helps me message to my contacts.\n"
-        instr_prompt += f"You are going to imitate my writing style and help me write a new message to send to one of my contact named: {person}.\n"
+    # try:
+    verbose("Now asking ChatGPT for messaging suggestions.")
+    #1 prompt is constructed through multiple steps
+    instr_prompt = "You are an assisant that helps me message to my contacts.\n"
+    instr_prompt += f"You are going to imitate my writing style and help me write a new message to send to one of my contact named: {person}.\n"
+    verbose("Instruction prompt finished!")
+    
+    # read gender: "male" or "female" or None
+    contact_gender = get_gender(person)
+    if contact_gender is None:
+        contact_gender = "other"
 
-        # read gender: "male" or "female" or None
-        contact_gender = get_gender(person)
-        if contact_gender is None:
-            contact_gender = "other"
-
-        #2 read personal prompts
-        personal_prompt = ""
-        personal_prompt_texts = prompt_manager.read_all(person)
-        if len(personal_prompt_texts) > 0:
-            personal_prompt = f"Here is some background information about {person}:\n"
-            for line in personal_prompt_texts:
-                personal_prompt += line + '\n'
-            
-        #4 prompting parameters
-        pv = param_manager.get("contact", person)
-        sampled_params = pv.sample(randomness=randomness, k=num_replies)
-        param_prompts = []
-        for params in sampled_params:
-            param_prompt = "The message you write must have following characteristics: "
-            flag = False
-            for p in params.keys():
-                level = LEVELS[params[p]]
-                if level is not None:
-                    param_prompt += LEVELS[params[p]] + ' ' + p + ", "
-                    flag = True
-            if flag:
-                param_prompt = param_prompt[:-2] + ".\n"
-                param_prompts.append(param_prompt)
-            else:
-                param_prompts.append("")
+    #2 read personal prompts
+    personal_prompt = ""
+    personal_prompt_texts = prompt_manager.read_all(person)
+    if len(personal_prompt_texts) > 0:
+        personal_prompt = f"Here is some background information about {person}:\n"
+        for line in personal_prompt_texts:
+            personal_prompt += line + '\n'
+    verbose("Personal prompt finished!")
         
-        #5 prompting intention
-        intention_prompt = ""
-        if intention is not None:
-            intention_prompt = "The message you write must express the following intention: "
-            intention_prompt += intention
-            intention_prompt += '\n'
-        
-        #6 prompting keywords
-        keyword_prompt = ""
-        if len(keywords) > 0:
-            keyword_prompt = "And every one of the following keywords should be included in the message you write: "
-            for keyword in keywords:
-                keyword_prompt += keyword + ", "
-            keyword_prompt = keyword_prompt[:-2] + ".\n"
-        
-        #7 read local chatlogs
-        final_prompt = "Here is the current context you will work on and you should write the new message in the same language as the previous conversation:\n"
-        local_chatlog = chatlog_manager.read_all(person)[-NUM_LOCAL_CHATLOG_MESSAGES:]
-        pronoun = {"male": "He", "female": "She", "other": "They"}[contact_gender]
-        local_chatlog_str = chatlog_to_str(person, local_chatlog)
-        final_prompt += local_chatlog_str
-        final_prompt += "I: "
+    #4 prompting parameters
+    pv = param_manager.get("contact", person)
+    sampled_params = pv.sample(randomness=randomness, k=num_replies)
+    param_prompts = []
+    for params in sampled_params:
+        param_prompt = "The message you write must have following characteristics: "
+        flag = False
+        for p in params.keys():
+            level = LEVELS[params[p]]
+            if level is not None:
+                param_prompt += LEVELS[params[p]] + ' ' + p + ", "
+                flag = True
+        if flag:
+            param_prompt = param_prompt[:-2] + ".\n"
+            param_prompts.append(param_prompt)
+        else:
+            param_prompts.append("")
+    verbose("Parameter prompt finished!")
+    
+    #5 prompting intention
+    intention_prompt = ""
+    if intention is not None:
+        intention_prompt = "The message you write must express the following intention: "
+        intention_prompt += intention
+        intention_prompt += '\n'
+    verbose("Intention prompt finished!")
+    
+    #6 prompting keywords
+    keyword_prompt = ""
+    if len(keywords) > 0:
+        keyword_prompt = "And every one of the following keywords should be included in the message you write: "
+        for keyword in keywords:
+            keyword_prompt += keyword + ", "
+        keyword_prompt = keyword_prompt[:-2] + ".\n"
+    verbose("Keyword prompt finished!")
+    
+    #7 read local chatlogs
+    final_prompt = "Here is the current context you will work on and you should write the new message in the same language as the previous conversation:\n"
+    local_chatlog = chatlog_manager.read_all(person)[-NUM_LOCAL_CHATLOG_MESSAGES:]
+    pronoun = {"male": "He", "female": "She", "other": "They"}[contact_gender]
+    local_chatlog_str = chatlog_to_str(person, local_chatlog)
+    final_prompt += local_chatlog_str
+    final_prompt += "I: "
+    verbose("Local chatlog prompt finished!")
 
-        #3 retrieve related chatlogs
-        retrieved_prompt = ""
-        if RETRIEVED_CHATLOGS_ON:
-            local_embed = get_embedding(local_chatlog_str)
-            frags = find_nearest_k_fragments(local_embed) #[(person, si, ei)]
-            if len(frags) > 0:
-                retrieved_prompt = "Here are some related chatlog fragments where you may learn useful information about me and my contacts, as well as my writing style:\n"
-                for i, (contact, si, ei) in enumerate(frags):
-                    retrieved_logs = read_chatlog(contact, si, ei)
-                    retrieved_prompt += f"Fragment #{i}, contact name = {contact}\n"
-                    retrieved_prompt += chatlog_to_str(contact, retrieved_logs)
-            
-        # assemble and send prompts
-        all_prompts = []
-        for i in range(num_replies):
-            param_prompt = param_prompts[i]
-            prompt_list = [instr_prompt, personal_prompt, retrieved_prompt, param_prompt, intention_prompt, keyword_prompt, final_prompt]
-            prompt = "\n".join([x for x in prompt_list if len(x) > 0])
-            all_prompts.append(prompt)
-        res = []
-        with Pool(num_replies) as pool:
-            for reply in pool.map(_ask_once, [p for p in all_prompts]):
-                res.append(reply)
-        return res
+    #3 retrieve related chatlogs
+    retrieved_prompt = ""
+    if RETRIEVED_CHATLOGS_ON:
+        local_embed = get_embedding(local_chatlog_str)
+        frags = find_nearest_k_fragments(local_embed) #[(person, si, ei)]
+        if len(frags) > 0:
+            retrieved_prompt = "Here are some related chatlog fragments where you may learn useful information about me and my contacts, as well as my writing style:\n"
+            for i, (contact, si, ei) in enumerate(frags):
+                retrieved_logs = read_chatlog(contact, si, ei)
+                retrieved_prompt += f"Fragment #{i}, contact name = {contact}\n"
+                retrieved_prompt += chatlog_to_str(contact, retrieved_logs)
+    verbose("Retrieved prompt finished!")
 
-    except Exception as e:
-        verbose(e)
-        return None
+    # assemble and send prompts
+    all_prompts = []
+    for i in range(num_replies):
+        param_prompt = param_prompts[i]
+        prompt_list = [instr_prompt, personal_prompt, retrieved_prompt, param_prompt, intention_prompt, keyword_prompt, final_prompt]
+        prompt = "\n".join([x for x in prompt_list if len(x) > 0])
+        all_prompts.append(prompt)
+    res = []
+    with Pool(num_replies) as pool:
+        for reply in pool.map(_ask_once, [p for p in all_prompts]):
+            res.append(reply)
+    return res, sampled_params
+
+    # except Exception as e:
+    #     verbose(e)
+    #     return None
 
 def read_chatlog(person: str, start_index:int=None, end_index:int=None) -> list:
     '''Read chat logs of a person. Return None if anything goes wrong.'''
@@ -585,6 +592,31 @@ def update_param_by_commands(scope: str, identifier: str, feedback_commands):
     except DBError as e:
         verbose(e)
         return False
+
+def update_param_by_dict(scope: str, identifier: str, param_dict):
+    '''Update param by dict'''
+    verbose("Updating params...")
+    try:
+        pv = param_manager.get(scope, identifier)
+        verbose("Previous params:")
+        verbose(str(pv))
+        pv.update(param_dict)
+        verbose("Current params:")
+        verbose(str(pv))
+        param_manager.writeback(pv)
+        return True
+    except DBError as e:
+        verbose(e)
+        return False
+
+def get_param_vector(scope: str, identifier: str):
+    '''Get param vector'''
+    try:
+        pv = param_manager.get(scope, identifier)
+        return pv
+    except DBError as e:
+        verbose(e)
+        return None
 
 def contact_description_to_prompts(person: str, des: str):
     prompt = r"""You are an assistant who generates memos for you on how to communicate through text messages with specific contacts.

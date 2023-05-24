@@ -13,6 +13,7 @@ print("Initializing...")
 
 # default macros
 DEFAUT_NUM_SUGGESTION = 3
+REGEN_CNT_LIMIT = 3
 
 # api & tokens
 tenant_token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -26,10 +27,10 @@ app_secret = "IudeMnAsLZkuuXhHmhFRecWssK6Rq3i2"
 open_id = "ou_f0aa230a1e9323d07f76a9a9a727c561"
 access_token = ""
 
-# chat config info, maps group ids to user-contact pairs
+# chat state info, maps group ids to user-contact pairs
 chats = {}
-# save chat config info before exit
-filename = str(Path("./data") / "config.json")
+# save chat state info before exit
+filename = str(Path("./data") / "state.json")
 def exit_handler(signum, frame):
     try:
         with open(filename, 'w', encoding="utf8") as f:
@@ -132,7 +133,10 @@ def webhook():
                         "chat_with": "UNDEFINED",
                         # following are added later, better use dict.get(key, default_value) when accessing cuz they possibly do not exist for earlier chats
                         "last_suggest": [],
+                        "last_params": [],
+                        "last_hint": "",
                         "wait_for_pick": False, # valid last suggestion flag
+                        "regen_cnt": 0,
                         "num_suggest": DEFAUT_NUM_SUGGESTION,
                         "auto_suggest": False, # if True, every new incoming msg from contact will trigger a suggestion
                         }
@@ -160,6 +164,23 @@ def webhook():
                                 print(f"{main_user} is chatting with {contact_name}.")
                                 t = threading.Thread(target=reply, args=(f"Contact name of current chat session set to {contact_name}.", message_id))
                                 t.start()
+                                t = threading.Thread(target=reply, args=(f"It seems you are chatting with a new contact.\nUse /gender and /describe to tell the agent more about this contact.", message_id))
+                                t.start()
+                            elif command[0] == "/gender" and len(command) > 1: # set the gender of the contact
+                                gender = command[1].strip()
+                                if gender not in ["male", "female", "other"]:
+                                    t = threading.Thread(target=reply, args=(f"Illegal gender input!", message_id))
+                                    t.start()
+                                else:
+                                    set_gender(chat_with, gender)
+                                    print(f"{main_user} set {chat_with}'s gender set to {gender}.")
+                                    t = threading.Thread(target=reply, args=(f"Contact {chat_with}'s gender set to {gender}.", message_id))
+                                    t.start()
+                            elif command[0] == "/describe" and len(command) > 1: # describe contact
+                                des = command[1].strip()
+                                print(f"Received a description from {main_user} about {chat_with}: {des}, parsing...")
+                                t = threading.Thread(target=describe_query, args=(chat_with, des, message_id))
+                                t.start()
                             elif command[0] == "/prompt" and len(command) > 1: # add a prompt to the contact
                                 prompt = command[1].strip()
                                 new_prompt(chat_with, prompt)
@@ -183,11 +204,15 @@ def webhook():
                                             print(f"{main_user} picked none of the suggestions!")
                                             t = threading.Thread(target=reply, args=(f"Sorry to hear that!", message_id))
                                             t.start()
-                                        else: # pick a valid one, add the message to chat log as if it was sent by main user
+                                        else: # pick a valid one, add the message to chat log as if it was sent by main user, and update param vector
                                             msg = chats[chat_id]["last_suggest"][pick-1]
+                                            params = chats[chat_id]["last_params"][pick-1]
                                             print(f"{main_user} picked suggestion number {pick}, contents: {msg}")
                                             new_message(person=chat_with, text=msg, send=sender_open_id == main_user)
                                             print(f"New message recorded. Sender id: {sender_open_id}.")
+                                            update_param_by_dict(scope="contact", identifier=chat_with, param_dict=params)
+                                            print(f"Following dict have been applied to param vector (contact, {chat_with}):")
+                                            print(params)
                                             t = threading.Thread(target=reply, args=(f"Pick done & message sent!\nYou: {msg}", message_id))
                                             t.start()
                                         chats[chat_id]["wait_for_pick"] = False # reset flag
@@ -207,10 +232,24 @@ def webhook():
                                 t = threading.Thread(target=reply, args=("All log of current chat session cleared!", message_id))
                                 t.start()
                             elif command[0] == "/suggest": # suggest reply thru LLM
+                                chats[chat_id]["regen_cnt"] = 0
                                 hint = command[1] if len(command) > 1 else ""
+                                chats[chat_id]["last_hint"] = hint
                                 print(f"Suggesting message for {main_user} chatting with {chat_with}, hint: {hint}.")
-                                t = threading.Thread(target=suggest_query, args=(chat_with, "chatgpt", chats[chat_id].get("num_suggest", DEFAUT_NUM_SUGGESTION), hint, message_id, chat_id))
+                                t = threading.Thread(target=suggest_query, args=(chat_with, chats[chat_id].get("num_suggest", DEFAUT_NUM_SUGGESTION), hint, message_id, chat_id))
                                 t.start()
+                            elif command[0] == "/regenerate": # regenerate suggestions
+                                hint = chats[chat_id]["last_hint"]
+                                if chats[chat_id]["regen_cnt"] >= REGEN_CNT_LIMIT: # reach limit, suggest user do a /feedback
+                                    print(f"Reaching limit regenerating suggestions for {main_user} chatting with {chat_with}, hint: {hint}.")
+                                    t = threading.Thread(target=reply, args=("Reaching regeneration limit! Consider doing a /feedback please.", message_id))
+                                    t.start()
+                                else:
+                                    chats[chat_id]["regen_cnt"] += 1
+                                    randomness = chats[chat_id]["regen_cnt"]
+                                    print(f"Regenerating suggestions for {main_user} chatting with {chat_with}, hint: {hint}, randomness: {randomness}")
+                                    t = threading.Thread(target=suggest_query, args=(chat_with, chats[chat_id].get("num_suggest", DEFAUT_NUM_SUGGESTION), hint, message_id, chat_id, randomness))
+                                    t.start()
                             elif command[0] == "/autosuggest": # config auto suggest
                                 op = command[1].lower().strip()
                                 if op == "enable":
@@ -231,6 +270,14 @@ def webhook():
                                     print(f"{main_user} issued an illegal num suggest config!")
                                     t = threading.Thread(target=reply, args=("Illegal!", message_id))
                                     t.start()
+                            elif command[0] == "/embed": # embed chatlogs
+                                print(f"{main_user} issued an embed command.")
+                                last_embed_end_index = read_meta("last_embed_end_index", get_user(), chat_with)
+                                embed_end_index = read_meta("counter", get_user(), chat_with)
+                                if last_embed_end_index is None:
+                                    last_embed_end_index = 0
+                                t = threading.Thread(target=summarize_and_embed_query, args=(chat_with, last_embed_end_index, embed_end_index, message_id))
+                                t.start()
                             else:
                                 print(f"{main_user} issued an unknown command: {text}")
                                 t = threading.Thread(target=reply, args=("Unknown command.", message_id))
@@ -246,7 +293,7 @@ def webhook():
                         else: # trigger auto suggestion (if enabled) if contact send a msg
                             if chats[chat_id].get("auto_suggest", False):
                                 print(f"Auto suggesting message for {main_user} chatting with {chat_with}, no hint.")
-                                t = threading.Thread(target=suggest_query, args=(chat_with, "chatgpt", chats[chat_id].get("num_suggest", DEFAUT_NUM_SUGGESTION), "", None, chat_id))
+                                t = threading.Thread(target=suggest_query, args=(chat_with, chats[chat_id].get("num_suggest", DEFAUT_NUM_SUGGESTION), "", None, chat_id))
                                 t.start()
         return "", 200
 
@@ -274,7 +321,7 @@ def random_chat_query(text, sender, message_id):
     random_chat_session_manager.writeback(session)
 
 
-def suggest_query(person: str, model: str, n_replies: int, hint: str, message_id: str, chat_id: str):
+def suggest_query(person: str, n_replies: int, hint: str, message_id: str, chat_id: str, randomness:int=0):
     '''Suggest and reply a suggest issue.
     Hint must be str, set it empty if no hint is provided
     If message_id is None, this will not reply a certain msg, just send back to chat'''
@@ -288,9 +335,10 @@ def suggest_query(person: str, model: str, n_replies: int, hint: str, message_id
         else:
             keywords = []
             intention = hint
-    res = suggest_replies(person, model, n_replies, keywords=keywords, intention=intention)
+    res, params = suggest_messages(person, n_replies, keywords=keywords, intention=intention, randomness=randomness)
     global chats
     chats[chat_id]["last_suggest"] = res
+    chats[chat_id]["last_params"] = params
     chats[chat_id]["wait_for_pick"] = True
     text = "LLM suggests:\n"
     for i in range(len(res)):
@@ -303,13 +351,23 @@ def suggest_query(person: str, model: str, n_replies: int, hint: str, message_id
 
 
 def feedback_query(feedback_msg, scope, id, message_id):
-    pv = param_manager.get(scope, id)
+    pv = get_param_vector(scope, id)
     commands = feedback2commands(feedback_msg, pv.get_all_param_names())
     update_param_by_commands(scope, id, commands)
     commands_plain = '\n'.join(commands)
     print(f"Following commands have been applied to param vector ({pv.scope}, {pv.id}):\n{commands_plain}")
     reply("Feedback has been learnt.", message_id)
 
+
+def describe_query(person: str, des: str, message_id: str):
+    prompt = contact_description_to_prompts(person, des)
+    new_prompt(person, prompt)
+    reply(f"New prompt: {prompt} added to {person}.", message_id)
+
+
+def summarize_and_embed_query(person, start_index, end_index, message_id):
+    summarize_and_embed(person, start_index, end_index)
+    reply(f"Embed from {start_index} to {end_index} finished!", message_id)
 
 def reply(text, message_id):
     headers = {

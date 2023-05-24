@@ -73,10 +73,10 @@ class ParamVector:
             result = [{} for _ in range(k)]
             for p in self.params.keys():
                 counter = Counter(self.history[p])
-                options = list(counter.keys())
+                options = range(NUM_LEVELS)
                 weights = []
                 for v in options:
-                    weights.append((counter[v] + COUNT_BIAS) * get_gaussian_y(v, mu=self.params[p], sigma=randomness*GAUSSIAN_FILTER_SIGMA_UNIT))
+                    weights.append((counter.get(v, 0) + COUNT_BIAS) * get_gaussian_y(v, mu=self.params[p], sigma=randomness*GAUSSIAN_FILTER_SIGMA_UNIT))
                 sample = random.choices(options, weights=weights, k=k)
                 for i in range(k):
                     result[i][p] = sample[i]

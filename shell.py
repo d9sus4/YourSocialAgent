@@ -118,13 +118,13 @@ class YSAShell(cmd.Cmd):
             else:
                 keywords = []
                 intention = hint
-        res = suggest_messages(self.person, self.num_res, keywords=keywords, intention=intention, randomness=0)
+        res, _ = suggest_messages(self.person, self.num_res, keywords=keywords, intention=intention, randomness=0)
         if res is not None:
             print("LLM suggests:")
             for i in range(len(res)):
                 print(f"{i+1}. {res[i]}")
             try:
-                choice = int('0' + input("Which one would you like to send? (0 for none): "))
+                choice = int('0' + input("Which one would you like to send? (0 for none, enter to regenerate): ")) # TODO
                 if choice in range(1, len(res)+1):
                     if new_message(self.person, res[choice-1], send=True):
                         print("Message sent!")
