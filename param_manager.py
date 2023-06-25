@@ -12,6 +12,7 @@ DEFAULT_PARAMS = [
     "verbosity",
     "seriousness",
     "politeness",
+    "break frequency",
     ]
 
 LEVELS = ["extremely low",
@@ -114,9 +115,6 @@ class ParamManager:
         return data
 
     def writeback(self, data: ParamVector):
-        dir = str(self.dir / data.scope)
-        if not os.path.exists(dir):
-            os.makedirs(dir)
         filename = str(self.dir / (data.scope + '_' + data.id + ".pkl"))
         try:
             with open(filename, 'wb') as f:

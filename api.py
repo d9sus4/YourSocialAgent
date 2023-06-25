@@ -124,7 +124,7 @@ def suggest_replies(person: str, model: str, n_replies: int, keywords: list=[], 
     verbose("Now asking LLM for reply suggestions.")
     if model == "chatgpt": # prompt is constructed through multiple steps
         
-        prompt = "You are an assisant that helps me handle my social relationships and communications with my contacts.\n"
+        prompt = "You are an assistant that helps me handle my social relationships and communications with my contacts.\n"
         prompt += "The following is an instant messaging conversation between another person and me.\n"
         # read personal prompts
         try:
@@ -244,7 +244,7 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
     # try:
     verbose("Now asking ChatGPT for messaging suggestions.")
     #1 prompt is constructed through multiple steps
-    instr_prompt = "You are an assisant that helps me message to my contacts.\n"
+    instr_prompt = "You are an assistant that helps me message to my contacts.\n"
     instr_prompt += f"You are going to imitate my writing style and help me write a new message to send to one of my contact named: {person}.\n"
     verbose("Instruction prompt finished!")
     
@@ -267,7 +267,7 @@ def suggest_messages(person: str, num_replies: int, keywords: list=[], intention
     sampled_params = pv.sample(randomness=randomness, k=num_replies)
     param_prompts = []
     for params in sampled_params:
-        param_prompt = "The message you write must have following characteristics: "
+        param_prompt = "The message you write must have following characteristics in text style: "
         flag = False
         for p in params.keys():
             level = LEVELS[params[p]]
@@ -716,7 +716,7 @@ def extract_num_from_plus_x_s_string(string: str):
     else:
         return None
 
-def find_nearest_k_fragments(embed:np.array, k:int=K_NEARST):
+def find_nearest_k_fragments(embed:np.array, k:int=K_NEARST): # legacy
     '''From all chat logs of all contacts, find k fragments that have the nearest embedding vector to a given vector
     Return a list of (person, start_index, end_index) tuples'''
     all_embeds = chatlog_manager.get_all_embeds()
@@ -728,9 +728,30 @@ def find_nearest_k_fragments(embed:np.array, k:int=K_NEARST):
     indices = [] # entry: (person, start_index, end_index) tuple
     for contact in contacts:
         for vec, si, ei in all_embeds[contact]:
-            distance = np.linalg.norm(vec - embed)  # 计算欧几里得距离
+            distance = np.linalg.norm(vec - embed)
             distances.append(distance)
             indices.append((contact, si, ei))
     k_indices = np.argsort(distances)[:k]
     k_nearest_frags = [indices[i] for i in k_indices]
     return k_nearest_frags
+
+def retrieve_related_blocks(embed:np.array, k:int=K_NEARST, timestamp:str=datetime.now(DEFAULT_TIMEZONE).isoformat()): # legacy
+    '''From all chat logs of all contacts, find k blocks that are most related and close to given time.
+    Return a list of (person, start_index, end_index) tuples'''
+    all_embeds = chatlog_manager.get_all_embeds()
+    contacts = all_embeds.keys()
+    distances = []
+    timestamps = []
+    indices = [] # entry: (person, start_index, end_index) tuple
+    for contact in contacts:
+        for vec, si, ei in all_embeds[contact]:
+            distance = np.linalg.norm(vec - embed)
+            distances.append(distance)
+            indices.append((contact, si, ei))
+            timestamps.append(chatlog_manager.read_chatlog(contact, si, ei)[0]["time"])
+    w1 = np.reciprocal(np.argsort(np.argsort(distances)))
+    w2 = np.array([1/np.log10(abs((datetime.fromisoformat(ts) - datetime.fromisoformat(timestamp)).total_seconds())) for ts in timestamps])
+    w = w1 * w2
+    k_indices = np.argsort(w)[:k]
+    k_nearest_blocks = [indices[i] for i in k_indices]
+    return k_nearest_blocks

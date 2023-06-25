@@ -5,5 +5,10 @@
 # print(l[None:None])
 # print(l[:-2])
 
-from api import *
-find_nearest_k_fragments(None)
+import numpy as np
+
+a = [10, 234, 199, 68, 120]
+sorted_indices = np.argsort(a)
+b = np.argsort(sorted_indices)
+
+print(b)

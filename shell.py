@@ -33,6 +33,7 @@ class YSAShell(cmd.Cmd):
         "addprompt",
         "feedback",
     )
+    MAX_RANDOMNESS = 3
 
     # overrides
     intro = "Your Social Agent Shell, type \"help\" for instructions."
@@ -43,6 +44,10 @@ class YSAShell(cmd.Cmd):
         line[0] = line[0].lower()
         if line[0] in self.ALIAS.keys():
             line[0] = self.ALIAS[line[0]]
+        if line[0] == "suggest":
+            self.now_randomness = min(self.now_randomness+1, self.MAX_RANDOMNESS)
+        else:
+            self.now_randomness = -1
         if line[0] in self.CHECK_PERSON and self.person is None:
             return "SET_A_PERSON_FIRST"
         return ' '.join(line)
@@ -56,6 +61,7 @@ class YSAShell(cmd.Cmd):
     # params
     person = None
     num_res = 3
+    now_randomness = -1
 
     # commands
     # call Cmd.onecmd(str) to interpret a single command
@@ -118,13 +124,16 @@ class YSAShell(cmd.Cmd):
             else:
                 keywords = []
                 intention = hint
-        res, _ = suggest_messages(self.person, self.num_res, keywords=keywords, intention=intention, randomness=0)
+        # res, _ = suggest_messages(self.person, self.num_res, keywords=keywords, intention=intention, randomness=self.now_randomness)
+        res = ["hi", "hello", "fucky"]
+        print(self.now_randomness)
         if res is not None:
             print("LLM suggests:")
             for i in range(len(res)):
                 print(f"{i+1}. {res[i]}")
             try:
-                choice = int('0' + input("Which one would you like to send? (0 for none, enter to regenerate): ")) # TODO
+                choice = '0' + input("Which one would you like to send? (0 to terminate): ")
+                choice = int(choice)
                 if choice in range(1, len(res)+1):
                     if new_message(self.person, res[choice-1], send=True):
                         print("Message sent!")
@@ -136,6 +145,7 @@ class YSAShell(cmd.Cmd):
                 print("Illegal input!")
         else:
             print("Failed!")
+
 
     def do_view(self, arg):
         "View all chat logs with the current person"
@@ -200,7 +210,7 @@ class YSAShell(cmd.Cmd):
     
     def do_test(self, arg):
         "Used for API testing only."
-        print(feedback2commands("注意标点符号的用法", ["verbosity"]))
+        print(contact_description_to_prompts("Tom", "他是我的室友"))
 
     
 def main():
